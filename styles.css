@@ -274,6 +274,22 @@ header h1 {
   word-break: break-all;
 }
 
+.path-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.path-row code {
+  flex: 1;
+}
+
+.btn-small {
+  padding: 10px 14px;
+  font-size: 0.9em;
+  white-space: nowrap;
+}
+
 .status-message {
   margin-top: 20px;
   padding: 15px;
@@ -318,4 +334,15 @@ footer {
 
 .data-preview::-webkit-scrollbar-thumb:hover {
   background: #a0aec0;
+}
+
+@media (max-width: 768px) {
+  .path-row {
+    flex-direction: column;
+  }
+
+  .btn-small {
+    width: 100%;
+    justify-content: center;
+  }
 }

@@ -53,15 +53,14 @@ npm start
    - Optionally export as text file for your records
 
 4. **Update JSON Files**
+   - Click "Select Single JSON" and choose the Single filer JSON file
+   - Click "Select Joint JSON" and choose the Joint filer JSON file
    - Click "Update Both JSON Files" button
-   - The app will update:
-     - `C:\TaxEngine\OCE-Regulatory-2025\Source\OR\Utils\Tables\TaxTableForSingle.table.json`
-     - `C:\TaxEngine\OCE-Regulatory-2025\Source\OR\Utils\Tables\TaxTableForJoint.table.json`
    - Success message will appear when complete
 
 ## File Locations
 
-The application updates the following files:
+The application defaults to the following files, but you can select different file locations in the UI:
 
 **Single Filers:**  
 `C:\TaxEngine\OCE-Regulatory-2025\Source\OR\Utils\Tables\TaxTableForSingle.table.json`

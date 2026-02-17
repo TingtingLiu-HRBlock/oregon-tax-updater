@@ -3,6 +3,12 @@ const path = require('path');
 const fs = require('fs').promises;
 
 let mainWindow;
+const DEFAULT_SINGLE_PATH = 'C:\\TaxEngine\\OCE-Regulatory-2025\\Source\\OR\\Utils\\Tables\\TaxTableForSingle.table.json';
+const DEFAULT_JOINT_PATH = 'C:\\TaxEngine\\OCE-Regulatory-2025\\Source\\OR\\Utils\\Tables\\TaxTableForJoint.table.json';
+
+function getJsonPathsFile() {
+  return path.join(app.getPath('userData'), 'json-paths.json');
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -51,16 +57,22 @@ ipcMain.handle('select-images', async () => {
 });
 
 // Handle JSON file update
-ipcMain.handle('update-json-files', async (event, taxData) => {
-  const singlePath = 'C:\\TaxEngine\\OCE-Regulatory-2025\\Source\\OR\\Utils\\Tables\\TaxTableForSingle.table.json';
-  const jointPath = 'C:\\TaxEngine\\OCE-Regulatory-2025\\Source\\OR\\Utils\\Tables\\TaxTableForJoint.table.json';
-  
+ipcMain.handle('update-json-files', async (event, payload) => {
+  const taxData = payload && payload.taxData ? payload.taxData : payload;
+  const singlePath = payload && payload.singlePath ? payload.singlePath : DEFAULT_SINGLE_PATH;
+  const jointPath = payload && payload.jointPath ? payload.jointPath : DEFAULT_JOINT_PATH;
+
   try {
     // Update Single file
     await updateJsonFile(singlePath, taxData, 'S');
     
     // Update Joint file
     await updateJsonFile(jointPath, taxData, 'J');
+
+    await saveJsonPaths({
+      singlePath,
+      jointPath
+    });
     
     return { 
       success: true, 
@@ -72,6 +84,35 @@ ipcMain.handle('update-json-files', async (event, taxData) => {
       message: `Error: ${error.message}` 
     };
   }
+});
+
+ipcMain.handle('get-json-file-paths', async () => {
+  return loadJsonPaths();
+});
+
+ipcMain.handle('save-json-file-paths', async (event, paths) => {
+  await saveJsonPaths(paths || {});
+  return { success: true };
+});
+
+ipcMain.handle('select-json-file', async (event, type, currentPath) => {
+  const fallbackPath = type === 'joint' ? DEFAULT_JOINT_PATH : DEFAULT_SINGLE_PATH;
+  const defaultPath = currentPath || fallbackPath;
+
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile'],
+    defaultPath,
+    filters: [
+      { name: 'JSON Files', extensions: ['json'] },
+      { name: 'All Files', extensions: ['*'] }
+    ]
+  });
+
+  if (!result.canceled && result.filePaths.length > 0) {
+    return result.filePaths[0];
+  }
+
+  return null;
 });
 
 async function updateJsonFile(filePath, taxData, filingStatus) {
@@ -123,3 +164,30 @@ ipcMain.handle('export-text-file', async (event, textContent) => {
   
   return { success: false, message: 'Save cancelled' };
 });
+
+async function loadJsonPaths() {
+  try {
+    const raw = await fs.readFile(getJsonPathsFile(), 'utf-8');
+    const parsed = JSON.parse(raw);
+    return {
+      singlePath: parsed.singlePath || DEFAULT_SINGLE_PATH,
+      jointPath: parsed.jointPath || DEFAULT_JOINT_PATH
+    };
+  } catch (error) {
+    return {
+      singlePath: DEFAULT_SINGLE_PATH,
+      jointPath: DEFAULT_JOINT_PATH
+    };
+  }
+}
+
+async function saveJsonPaths(paths) {
+  const existing = await loadJsonPaths();
+  const merged = {
+    singlePath: paths.singlePath || existing.singlePath || DEFAULT_SINGLE_PATH,
+    jointPath: paths.jointPath || existing.jointPath || DEFAULT_JOINT_PATH
+  };
+
+  await fs.writeFile(getJsonPathsFile(), JSON.stringify(merged, null, 2), 'utf-8');
+  return merged;
+}

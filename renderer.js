@@ -4,12 +4,20 @@ const Tesseract = require('tesseract.js');
 let selectedImages = [];
 let extractedTaxData = {};
 let extractedTextOutput = '';
+let jsonFilePaths = {
+  singlePath: '',
+  jointPath: ''
+};
 
 // UI Elements
 const selectImagesBtn = document.getElementById('selectImagesBtn');
 const extractDataBtn = document.getElementById('extractDataBtn');
 const exportTextBtn = document.getElementById('exportTextBtn');
 const updateJsonBtn = document.getElementById('updateJsonBtn');
+const selectSingleJsonBtn = document.getElementById('selectSingleJsonBtn');
+const selectJointJsonBtn = document.getElementById('selectJointJsonBtn');
+const singlePathCode = document.getElementById('singlePathCode');
+const jointPathCode = document.getElementById('jointPathCode');
 const imagePreview = document.getElementById('imagePreview');
 const dataPreview = document.getElementById('dataPreview');
 const extractionProgress = document.getElementById('extractionProgress');
@@ -549,10 +557,20 @@ exportTextBtn.addEventListener('click', async () => {
 });
 
 updateJsonBtn.addEventListener('click', async () => {
+  if (!jsonFilePaths.singlePath || !jsonFilePaths.jointPath) {
+    updateStatus.textContent = 'Select both Single and Joint JSON files first.';
+    updateStatus.className = 'status-message error';
+    return;
+  }
+
   updateStatus.textContent = 'Updating JSON files...';
   updateStatus.className = 'status-message';
   
-  const result = await ipcRenderer.invoke('update-json-files', TAX_TABLE_2024);
+  const result = await ipcRenderer.invoke('update-json-files', {
+    taxData: TAX_TABLE_2024,
+    singlePath: jsonFilePaths.singlePath,
+    jointPath: jsonFilePaths.jointPath
+  });
   
   if (result.success) {
     updateStatus.textContent = '✅ ' + result.message;
@@ -560,6 +578,26 @@ updateJsonBtn.addEventListener('click', async () => {
   } else {
     updateStatus.textContent = '❌ ' + result.message;
     updateStatus.className = 'status-message error';
+  }
+});
+
+selectSingleJsonBtn.addEventListener('click', async () => {
+  const selectedPath = await ipcRenderer.invoke('select-json-file', 'single', jsonFilePaths.singlePath);
+  if (selectedPath) {
+    jsonFilePaths.singlePath = selectedPath;
+    renderJsonPaths();
+    await ipcRenderer.invoke('save-json-file-paths', jsonFilePaths);
+    refreshUpdateButtonState();
+  }
+});
+
+selectJointJsonBtn.addEventListener('click', async () => {
+  const selectedPath = await ipcRenderer.invoke('select-json-file', 'joint', jsonFilePaths.jointPath);
+  if (selectedPath) {
+    jsonFilePaths.jointPath = selectedPath;
+    renderJsonPaths();
+    await ipcRenderer.invoke('save-json-file-paths', jsonFilePaths);
+    refreshUpdateButtonState();
   }
 });
 
@@ -606,7 +644,7 @@ async function extractDataFromImages() {
   
   progressText.textContent = '✅ Extraction complete!';
   exportTextBtn.disabled = false;
-  updateJsonBtn.disabled = false;
+  refreshUpdateButtonState();
   
   setTimeout(() => {
     extractionProgress.style.display = 'none';
@@ -693,3 +731,30 @@ function showStatus(message, type) {
     statusDiv.remove();
   }, 3000);
 }
+
+function renderJsonPaths() {
+  singlePathCode.textContent = jsonFilePaths.singlePath || 'Not selected';
+  jointPathCode.textContent = jsonFilePaths.jointPath || 'Not selected';
+}
+
+function refreshUpdateButtonState() {
+  const hasTaxData = Object.keys(extractedTaxData).length > 0;
+  const hasPaths = Boolean(jsonFilePaths.singlePath && jsonFilePaths.jointPath);
+  updateJsonBtn.disabled = !(hasTaxData && hasPaths);
+}
+
+async function initializeJsonPaths() {
+  try {
+    const savedPaths = await ipcRenderer.invoke('get-json-file-paths');
+    jsonFilePaths.singlePath = savedPaths.singlePath || '';
+    jsonFilePaths.jointPath = savedPaths.jointPath || '';
+  } catch (error) {
+    jsonFilePaths.singlePath = '';
+    jsonFilePaths.jointPath = '';
+  }
+
+  renderJsonPaths();
+  refreshUpdateButtonState();
+}
+
+initializeJsonPaths();
