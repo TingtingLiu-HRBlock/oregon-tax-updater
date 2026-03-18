@@ -1,193 +1,268 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs').promises;
+const { getAllStates, getState } = require('./States');
 
 let mainWindow;
-const DEFAULT_SINGLE_PATH = 'C:\\TaxEngine\\OCE-Regulatory-2025\\Source\\OR\\Utils\\Tables\\TaxTableForSingle.table.json';
-const DEFAULT_JOINT_PATH = 'C:\\TaxEngine\\OCE-Regulatory-2025\\Source\\OR\\Utils\\Tables\\TaxTableForJoint.table.json';
 
-function getJsonPathsFile() {
-  return path.join(app.getPath('userData'), 'json-paths.json');
+// ─── Config file paths ───────────────────────────────────────────────────────
+
+function getConfigPath(filename) {
+  return path.join(app.getPath('userData'), filename);
 }
+
+// ─── Window ──────────────────────────────────────────────────────────────────
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: 1300,
+    height: 900,
+    minWidth: 1100,
+    minHeight: 700,
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js')
     },
+    titleBarStyle: 'hiddenInset',
     icon: path.join(__dirname, 'assets', 'icon.png')
   });
 
   mainWindow.loadFile('index.html');
-  
-  // Open DevTools in development
-  // mainWindow.webContents.openDevTools();
 }
 
 app.whenReady().then(createWindow);
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  if (process.platform !== 'darwin') app.quit();
 });
 
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
-  }
+  if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
 
-// Handle file selection
-ipcMain.handle('select-images', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openFile', 'multiSelections'],
-    filters: [
-      { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif', 'bmp'] }
-    ]
-  });
-  
-  if (!result.canceled && result.filePaths.length > 0) {
-    return result.filePaths;
-  }
-  return null;
+// ─── State registry handlers ─────────────────────────────────────────────────
+
+ipcMain.handle('get-all-states', () => {
+  return getAllStates().map(s => ({ code: s.code, name: s.name }));
 });
 
-// Handle JSON file update
-ipcMain.handle('update-json-files', async (event, payload) => {
-  const taxData = payload && payload.taxData ? payload.taxData : payload;
-  const singlePath = payload && payload.singlePath ? payload.singlePath : DEFAULT_SINGLE_PATH;
-  const jointPath = payload && payload.jointPath ? payload.jointPath : DEFAULT_JOINT_PATH;
+ipcMain.handle('get-state-config', (event, code) => {
+  return getState(code);
+});
 
+// ─── Settings (API key etc.) ─────────────────────────────────────────────────
+
+async function loadSettings() {
   try {
-    // Update Single file
-    await updateJsonFile(singlePath, taxData, 'S');
-    
-    // Update Joint file
-    await updateJsonFile(jointPath, taxData, 'J');
-
-    await saveJsonPaths({
-      singlePath,
-      jointPath
-    });
-    
-    return { 
-      success: true, 
-      message: 'Both JSON files updated successfully!' 
+    const raw = await fs.readFile(getConfigPath('settings.json'), 'utf-8');
+    const parsed = JSON.parse(raw);
+    return {
+      openaiApiKey: parsed.openaiApiKey || '',
+      anthropicApiKey: parsed.anthropicApiKey || ''
     };
-  } catch (error) {
-    return { 
-      success: false, 
-      message: `Error: ${error.message}` 
-    };
+  } catch {
+    return { openaiApiKey: '', anthropicApiKey: '' };
   }
-});
+}
 
-ipcMain.handle('get-json-file-paths', async () => {
-  return loadJsonPaths();
-});
+async function saveSettingsToFile(settings) {
+  await fs.writeFile(getConfigPath('settings.json'), JSON.stringify(settings, null, 2), 'utf-8');
+}
 
-ipcMain.handle('save-json-file-paths', async (event, paths) => {
-  await saveJsonPaths(paths || {});
+ipcMain.handle('get-settings', async () => loadSettings());
+
+ipcMain.handle('save-settings', async (event, settings) => {
+  await saveSettingsToFile(settings);
   return { success: true };
 });
 
-ipcMain.handle('select-json-file', async (event, type, currentPath) => {
-  const fallbackPath = type === 'joint' ? DEFAULT_JOINT_PATH : DEFAULT_SINGLE_PATH;
-  const defaultPath = currentPath || fallbackPath;
+// ─── JSON file path persistence ──────────────────────────────────────────────
 
+async function loadAllJsonPaths() {
+  try {
+    const raw = await fs.readFile(getConfigPath('json-paths.json'), 'utf-8');
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+async function saveAllJsonPaths(allPaths) {
+  await fs.writeFile(getConfigPath('json-paths.json'), JSON.stringify(allPaths, null, 2), 'utf-8');
+}
+
+// Build default paths for a state + regulatory year
+function buildDefaultPaths(stateCode, regulatoryYear) {
+  const stateConfig = getState(stateCode);
+  if (!stateConfig) return {};
+  const result = {};
+  for (const status of stateConfig.filingStatuses) {
+    result[status.key] = status.defaultPathTemplate.replace('{regulatoryYear}', regulatoryYear);
+  }
+  return result;
+}
+
+ipcMain.handle('read-json-file-paths', async (event, stateCode, regulatoryYear) => {
+  const all = await loadAllJsonPaths();
+  const key = `${stateCode}-${regulatoryYear}`;
+  if (all[key]) return all[key];
+  // Return defaults if no saved paths
+  return buildDefaultPaths(stateCode, regulatoryYear);
+});
+
+ipcMain.handle('save-json-file-paths', async (event, stateCode, paths) => {
+  const all = await loadAllJsonPaths();
+  // paths contains { stateCode, regulatoryYear, filePaths: { [statusKey]: path } }
+  const key = `${paths.stateCode}-${paths.regulatoryYear}`;
+  all[key] = paths.filePaths;
+  await saveAllJsonPaths(all);
+  return { success: true };
+});
+
+// ─── File dialogs ─────────────────────────────────────────────────────────────
+
+ipcMain.handle('select-images', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif', 'bmp'] }]
+  });
+  return result.canceled ? null : result.filePaths;
+});
+
+ipcMain.handle('select-pdf-file', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openFile'],
-    defaultPath,
+    filters: [{ name: 'PDF Files', extensions: ['pdf'] }]
+  });
+  return result.canceled ? null : result.filePaths[0];
+});
+
+ipcMain.handle('select-json-file', async (event, type, currentPath) => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile'],
+    defaultPath: currentPath || '',
     filters: [
       { name: 'JSON Files', extensions: ['json'] },
       { name: 'All Files', extensions: ['*'] }
     ]
   });
-
-  if (!result.canceled && result.filePaths.length > 0) {
-    return result.filePaths[0];
-  }
-
-  return null;
+  return result.canceled ? null : result.filePaths[0];
 });
 
-async function updateJsonFile(filePath, taxData, filingStatus) {
-  // Read the existing JSON file
-  const fileContent = await fs.readFile(filePath, 'utf-8');
-  const data = JSON.parse(fileContent);
-  
-  // Update the Year field
-  data.Year = 2024;
-  
-  // Update the tax values in the Fields array
+// ─── Read current JSON values for diff ───────────────────────────────────────
+
+ipcMain.handle('read-current-json-values', async (event, filePath) => {
+  try {
+    const raw = await fs.readFile(filePath, 'utf-8');
+    const data = JSON.parse(raw);
+
+    if (!data.Fields || !Array.isArray(data.Fields)) {
+      return { success: false, message: 'Invalid JSON structure: missing Fields array' };
+    }
+
+    const values = {};
+    for (const field of data.Fields) {
+      const income = Array.isArray(field.Key) ? field.Key[0] : field.Key;
+      values[parseInt(income)] = field.Value;
+    }
+
+    return { success: true, values, year: data.Year, lookUpType: data.LookUpType || 'LowerBoundary' };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+});
+
+// ─── Update JSON files ────────────────────────────────────────────────────────
+
+ipcMain.handle('update-json-files', async (event, payload) => {
+  // payload: { taxYear, updates: [{ statusKey, filePath, newValues: { [income]: value } }] }
+  const results = [];
+
+  for (const update of payload.updates) {
+    try {
+      await updateJsonFile(update.filePath, update.newValues, payload.taxYear);
+      results.push({ statusKey: update.statusKey, success: true });
+    } catch (error) {
+      results.push({ statusKey: update.statusKey, success: false, message: error.message });
+    }
+  }
+
+  return results;
+});
+
+async function updateJsonFile(filePath, newValues, taxYear) {
+  const raw = await fs.readFile(filePath, 'utf-8');
+  const data = JSON.parse(raw);
+
+  if (!data.Fields || !Array.isArray(data.Fields)) {
+    throw new Error(`Invalid JSON structure in ${filePath}`);
+  }
+
+  // Update year
+  data.Year = taxYear;
+
   let updatedCount = 0;
   for (const field of data.Fields) {
-    if (field.Key && field.Value !== undefined) {
-      const keyValue = parseInt(field.Key);
-      if (taxData[keyValue]) {
-        const newValue = taxData[keyValue][filingStatus];
-        field.Value = String(newValue);
-        updatedCount++;
-      }
+    const income = parseInt(Array.isArray(field.Key) ? field.Key[0] : field.Key);
+    if (newValues[income] !== undefined) {
+      // Preserve existing value type (string vs number)
+      const existingValue = field.Value;
+      const newVal = newValues[income];
+      field.Value = typeof existingValue === 'string' ? String(newVal) : Number(newVal);
+      updatedCount++;
     }
   }
-  
-  // Write the updated JSON back to file
+
   await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
-  
-  console.log(`Updated ${updatedCount} entries in ${filePath}`);
+  console.log(`Updated ${updatedCount} entries in ${path.basename(filePath)}`);
+  return updatedCount;
 }
 
-// Handle text file export
+// ─── Export text file ─────────────────────────────────────────────────────────
+
 ipcMain.handle('export-text-file', async (event, textContent) => {
   const result = await dialog.showSaveDialog(mainWindow, {
-    title: 'Save Tax Table as Text',
-    defaultPath: 'oregon_tax_table_2024.txt',
-    filters: [
-      { name: 'Text Files', extensions: ['txt'] },
-      { name: 'All Files', extensions: ['*'] }
-    ]
+    title: 'Export Tax Table',
+    defaultPath: 'tax_table_export.txt',
+    filters: [{ name: 'Text Files', extensions: ['txt'] }]
   });
-  
-  if (!result.canceled && result.filePath) {
-    try {
-      await fs.writeFile(result.filePath, textContent, 'utf-8');
-      return { success: true, path: result.filePath };
-    } catch (error) {
-      return { success: false, message: error.message };
-    }
+
+  if (result.canceled || !result.filePath) {
+    return { success: false, message: 'Cancelled' };
   }
-  
-  return { success: false, message: 'Save cancelled' };
+
+  try {
+    await fs.writeFile(result.filePath, textContent, 'utf-8');
+    return { success: true, path: result.filePath };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
 });
 
-async function loadJsonPaths() {
+// ─── Read image as base64 (for model API) ────────────────────────────────────
+
+ipcMain.handle('read-binary-file-as-base64', async (event, filePath) => {
   try {
-    const raw = await fs.readFile(getJsonPathsFile(), 'utf-8');
-    const parsed = JSON.parse(raw);
-    return {
-      singlePath: parsed.singlePath || DEFAULT_SINGLE_PATH,
-      jointPath: parsed.jointPath || DEFAULT_JOINT_PATH
-    };
+    const buffer = await fs.readFile(filePath);
+    return { success: true, base64: buffer.toString('base64') };
   } catch (error) {
-    return {
-      singlePath: DEFAULT_SINGLE_PATH,
-      jointPath: DEFAULT_JOINT_PATH
-    };
+    return { success: false, message: error.message };
   }
-}
+});
 
-async function saveJsonPaths(paths) {
-  const existing = await loadJsonPaths();
-  const merged = {
-    singlePath: paths.singlePath || existing.singlePath || DEFAULT_SINGLE_PATH,
-    jointPath: paths.jointPath || existing.jointPath || DEFAULT_JOINT_PATH
-  };
+ipcMain.handle('read-image-as-base64', async (event, filePath) => {
+  try {
+    const buffer = await fs.readFile(filePath);
+    const ext = path.extname(filePath).toLowerCase().slice(1);
+    const mimeMap = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', bmp: 'image/bmp' };
+    const mediaType = mimeMap[ext] || 'image/jpeg';
+    return { success: true, base64: buffer.toString('base64'), mediaType };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+});
 
-  await fs.writeFile(getJsonPathsFile(), JSON.stringify(merged, null, 2), 'utf-8');
-  return merged;
-}
+
+
+

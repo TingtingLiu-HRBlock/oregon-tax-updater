@@ -1,28 +1,34 @@
 {
-  "name": "oregon-tax-table-updater",
-  "version": "1.0.1",
-  "description": "Desktop app to extract tax tables from screenshots and update JSON files",
+  "name": "state-tax-updater",
+  "version": "2.0.0",
+  "description": "Multi-state tax table updater with PDF and screenshot extraction",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "build": "electron-builder"
   },
-  "keywords": ["tax", "oregon", "electron", "ocr"],
-  "author": "",
-  "license": "MIT",
-  "devDependencies": {
-    "electron": "^28.0.0",
-    "electron-builder": "^24.9.1"
+  "build": {
+    "appId": "com.hrblock.state-tax-updater",
+    "productName": "State Tax Table Updater",
+    "win": {
+      "target": "nsis"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer.js",
+      "index.html",
+      "styles.css",
+      "states/**",
+      "assets/**"
+    ]
   },
   "dependencies": {
-    "tesseract.js": "^5.0.4"
+    "electron": "^28.0.0",
+    "pdfjs-dist": "^4.8.69"
   },
-  "build": {
-    "appId": "com.taxtable.updater",
-    "productName": "Oregon Tax Table Updater",
-    "win": {
-      "target": "nsis",
-      "icon": "assets/icon.ico"
-    }
+  "devDependencies": {
+    "electron-builder": "^24.0.0"
   }
 }
+

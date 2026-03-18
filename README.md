@@ -1,114 +1,145 @@
-# Oregon Tax Table Updater
+# State Tax Table Updater
 
-A desktop application to extract tax tables from screenshots and automatically update JSON files for the Oregon tax system.
+Desktop Electron app for extracting state tax table values from official instruction PDFs or screenshots and updating the corresponding JSON table files.
 
-## Features
+## What It Does
 
-✅ **Upload Screenshots** - Support for multiple image formats (JPG, PNG, BMP, GIF)  
-✅ **Extract Tax Data** - Processes images and extracts tax table values  
-✅ **Review Data** - Preview extracted data before updating  
-✅ **Export to Text** - Save tax tables as structured text files  
-✅ **Automatic JSON Update** - Updates both Single and Joint JSON files automatically  
+- Supports multiple states through state-specific config.
+- Lets you choose either screenshots or an instruction PDF as the source.
+- Can auto-detect the tax table page range from the PDF contents page when config is missing.
+- Lets you manually override PDF start and end pages.
+- Shows a review screen before writing JSON updates.
+- Updates the configured JSON table files and the `Year` field.
+
+## Current Extraction Modes
+
+### Deterministic PDF Parser
+Used when the source is a PDF for these states:
+- Oregon (`OR`)
+- Minnesota (`MN`)
+
+This path does not require an OpenAI API key.
+
+### OpenAI Vision Fallback
+Used for:
+- screenshot-based extraction
+- states that do not yet have a deterministic PDF parser
+
+This path requires an OpenAI API key in Settings.
+
+## Supported State Setups
+
+### Oregon
+- Filing statuses:
+  - `S` = Single / Married Filing Separately
+  - `J` = Married Jointly / Head of Household / Surviving Spouse
+- 2024 PDF tax-table page range:
+  - `26-28`
+- Deterministic PDF parser:
+  - Yes
+
+### Minnesota
+- Filing statuses:
+  - `Single`
+  - `MFJ` = Married Jointly / Qualifying Surviving Spouse
+  - `MFS` = Married Filing Separately
+  - `HOH` = Head of Household
+- 2024 PDF tax-table page range:
+  - `30-36`
+- Deterministic PDF parser:
+  - Yes
 
 ## Installation
 
 ### Prerequisites
-- Node.js (v16 or higher)
-- npm (comes with Node.js)
+- Node.js 18 or higher recommended
+- npm
 
-### Steps
+### Setup
 
-1. **Extract the application folder** to your desired location
+```bash
+npm install
+```
 
-2. **Open Command Prompt or Terminal** in the application folder
-
-3. **Install dependencies:**
-   ```bash
-   npm install
-   ```
-
-## Usage
-
-### Running the Application
+## Running the App
 
 ```bash
 npm start
 ```
 
-### Step-by-Step Guide
-
-1. **Upload Tax Table Screenshots**
-   - Click "Select Images" button
-   - Choose 1-3 screenshots of Oregon tax table pages
-   - Images will appear in the preview area
-
-2. **Extract Tax Table Data**
-   - Click "Extract Data from Images" button
-   - Wait for the extraction process to complete
-   - Progress bar will show the status
-
-3. **Review Extracted Data**
-   - Check the data preview section
-   - Verify the extraction summary shows correct information
-   - Optionally export as text file for your records
-
-4. **Update JSON Files**
-   - Click "Select Single JSON" and choose the Single filer JSON file
-   - Click "Select Joint JSON" and choose the Joint filer JSON file
-   - Click "Update Both JSON Files" button
-   - Success message will appear when complete
-
-## File Locations
-
-The application defaults to the following files, but you can select different file locations in the UI:
-
-**Single Filers:**  
-`C:\TaxEngine\OCE-Regulatory-2025\Source\OR\Utils\Tables\TaxTableForSingle.table.json`
-
-**Joint Filers:**  
-`C:\TaxEngine\OCE-Regulatory-2025\Source\OR\Utils\Tables\TaxTableForJoint.table.json`
-
-## Building for Distribution
-
-To create a standalone executable:
+## Build
 
 ```bash
 npm run build
 ```
 
-The executable will be created in the `dist` folder.
+## Typical Workflow
 
-## Technical Details
+1. Start the app.
+2. Select the state.
+3. Select the tax year and regulatory folder year.
+4. Configure or confirm the JSON file paths.
+5. Choose one source type:
+   - `Select PDF` for an instruction booklet
+   - `Select Images` for screenshots
+6. If using a PDF:
+   - confirm the detected or configured page range
+   - or manually override the page range
+7. Run extraction.
+8. Review changes by filing-status tab.
+9. Update the JSON files.
 
-- **Framework:** Electron
-- **Tax Year:** 2024
-- **Income Range:** $0 - $49,900
-- **Data Points:** 500+ tax brackets
+## PDF Workflow Notes
+
+- The app does not need to send the entire PDF to a model.
+- It selects only the relevant tax-table pages.
+- When available, the app uses a deterministic parser directly on PDF text positions.
+- When no built-in page range exists, the app can look for contents-page text such as `Tax Tables 30-36`.
+- You can always override the PDF page range manually.
+
+## Screenshot Workflow Notes
+
+- Screenshot extraction is still supported.
+- Screenshot extraction currently uses the OpenAI path.
+- State-specific slicing rules are applied before extraction.
+
+## Project Structure
+
+- [main.js](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/main.js): Electron main process and IPC handlers
+- [preload.js](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/preload.js): safe renderer bridge
+- [renderer.js](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/renderer.js): UI, extraction flow, PDF rendering, deterministic parsers, diff review
+- [States/OR.js](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/States/OR.js): Oregon state config
+- [States/MN.js](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/States/MN.js): Minnesota state config
+
+## Manual Scenario Tests
+
+- [SCENARIO_TEST_OR_2024.md](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/SCENARIO_TEST_OR_2024.md)
+- [SCENARIO_TEST_OR_2024_PDF.md](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/SCENARIO_TEST_OR_2024_PDF.md)
+- [SCENARIO_TEST_MN_2024_PDF.md](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/SCENARIO_TEST_MN_2024_PDF.md)
+- [SCENARIO_TEST_REVIEW_TABS.md](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/SCENARIO_TEST_REVIEW_TABS.md)
+- [SCENARIO_TEST_PDF_PAGE_RANGE.md](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/SCENARIO_TEST_PDF_PAGE_RANGE.md)
 
 ## Troubleshooting
 
-**Images not loading?**
-- Ensure images are in a supported format (JPG, PNG, BMP, GIF)
-- Check that files are not corrupted
+### PDF page range is wrong
+- Check the configured range for the selected state and year.
+- Try the contents-page auto-detected range.
+- Override the start and end pages manually.
 
-**JSON files not updating?**
-- Verify the file paths exist on your system
-- Check that you have write permissions to the directories
-- Make sure the JSON files have the correct structure
+### Extraction requires an API key
+- That is expected for screenshot extraction.
+- For Oregon and Minnesota PDFs, the deterministic parser path should work without an OpenAI key.
 
-**Application won't start?**
-- Ensure Node.js is installed correctly
-- Run `npm install` again to reinstall dependencies
-- Check for error messages in the console
+### JSON files do not update
+- Verify the JSON paths are correct.
+- Verify you have write permission for the target folders.
+- Verify the selected state matches the selected JSON table set.
 
-## Support
-
-For issues or questions, please check:
-1. This README file
-2. The troubleshooting section above
-3. Node.js and Electron documentation
+### App does not start
+- Run `npm install` again.
+- Check the console output for Electron startup errors.
 
 ## Version
 
-Current Version: 1.0.1  
-Tax Year: 2024
+- App version: `2.0.0`
+- Current deterministic PDF parser states: `OR`, `MN`
