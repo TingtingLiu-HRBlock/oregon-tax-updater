@@ -6,19 +6,15 @@ let appState = {
   taxYear: new Date().getFullYear(),
   regulatoryYear: new Date().getFullYear(),
   filePaths: {},        // { [statusKey]: path }
-  selectedImages: [],
   selectedPdfPath: null,
   pdfPageRangeOverride: { start: '', end: '' },
-  pdfPageRangeSource: 'configured',
   extractedData: null,  // { [statusKey]: { [income]: value } }
   diffResults: null,    // { [statusKey]: { changed: [], matched: number, missing: number } }
-  settings: { openaiApiKey: '', anthropicApiKey: '' }
 };
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 async function init() {
-  appState.settings = await window.api.getSettings();
 
   const states = await window.api.getAllStates();
   populateStateDropdown(states);
@@ -32,7 +28,6 @@ async function init() {
     await onStateChange(states[0].code);
   }
 
-  updateApiKeyIndicator();
 }
 
 // ─── Dropdowns ────────────────────────────────────────────────────────────────
@@ -66,10 +61,8 @@ function populateYearDropdowns() {
 async function onStateChange(stateCode) {
   appState.selectedStateCode = stateCode;
   appState.selectedStateConfig = await window.api.getStateConfig(stateCode);
-  appState.selectedImages = [];
   appState.selectedPdfPath = null;
   appState.pdfPageRangeOverride = { start: '', end: '' };
-  appState.pdfPageRangeSource = 'configured';
   appState.extractedData = null;
   appState.diffResults = null;
 
@@ -130,50 +123,15 @@ async function persistFilePaths() {
   });
 }
 
-// ─── Image selection ──────────────────────────────────────────────────────────
-
-async function selectImages() {
-  const paths = await window.api.selectImages();
-  if (!paths || paths.length === 0) return;
-
-  appState.selectedImages = paths;
-  appState.selectedPdfPath = null;
-  renderSelectedSource();
-  updateActionButtons();
-}
-
 async function selectPdf() {
   const selected = await window.api.selectPdfFile();
   if (!selected) return;
 
   appState.selectedPdfPath = selected;
-  appState.selectedImages = [];
-
-  const configured = getConfiguredPdfPageRange();
-  if (configured) {
-    appState.pdfPageRangeOverride = { start: String(configured.start), end: String(configured.end) };
-    appState.pdfPageRangeSource = 'configured';
-  } else {
-    appState.pdfPageRangeOverride = { start: '', end: '' };
-    appState.pdfPageRangeSource = 'manual override';
-    try {
-      const detected = await detectTaxTablePageRangeFromPdf(selected);
-      if (detected) {
-        appState.pdfPageRangeOverride = { start: String(detected.start), end: String(detected.end) };
-        appState.pdfPageRangeSource = 'auto-detected';
-      }
-    } catch (error) {
-      console.warn('PDF page-range detection failed:', error);
-    }
-  }
+  appState.pdfPageRangeOverride = { start: '', end: '' };
 
   renderSelectedSource();
   updateActionButtons();
-}
-
-function getConfiguredPdfPageRange() {
-  const config = appState.selectedStateConfig;
-  return config?.pdfTaxTablePagesByYear?.[appState.taxYear] || null;
 }
 
 function getEffectivePdfPageRange() {
@@ -184,7 +142,7 @@ function getEffectivePdfPageRange() {
     return { start, end };
   }
 
-  return getConfiguredPdfPageRange();
+  return null;
 }
 
 function syncPdfPageInputs() {
@@ -197,24 +155,18 @@ function syncPdfPageInputs() {
 }
 
 function renderSelectedSource() {
-  const previewSection = document.getElementById('imagePreviewSection');
-  const preview = document.getElementById('imagePreview');
   const pdfSection = document.getElementById('pdfSelectionSection');
   const pdfSummary = document.getElementById('pdfSelectionSummary');
 
   if (appState.selectedPdfPath) {
-    const configured = getConfiguredPdfPageRange();
     const effective = getEffectivePdfPageRange();
-    previewSection.style.display = 'none';
-    preview.innerHTML = '';
     pdfSection.style.display = 'block';
     syncPdfPageInputs();
-    const fileName = appState.selectedPdfPath.split(/[/\\]/).pop();
+    const fileName = appState.selectedPdfPath.split(/[\/\\]/).pop();
     if (effective) {
-      const sourceLabel = appState.pdfPageRangeSource;
-      pdfSummary.textContent = `PDF selected: ${fileName} | Tax table pages ${effective.start}-${effective.end} (${sourceLabel})`;
+      pdfSummary.textContent = `PDF selected: ${fileName} | Tax table pages ${effective.start}-${effective.end}`;
     } else {
-      pdfSummary.textContent = `PDF selected: ${fileName} | Enter PDF start/end pages for tax year ${appState.taxYear}`;
+      pdfSummary.textContent = `PDF selected: ${fileName} | Enter required PDF start/end pages for tax year ${appState.taxYear}`;
     }
     return;
   }
@@ -222,299 +174,9 @@ function renderSelectedSource() {
   pdfSection.style.display = 'none';
   pdfSummary.textContent = '';
   syncPdfPageInputs();
-
-  if (appState.selectedImages.length > 0) {
-    previewSection.style.display = 'block';
-    preview.innerHTML = appState.selectedImages.map(p => `
-      <div class="image-item">
-        <img src="${p}" alt="Tax table screenshot" />
-        <div class="image-filename">${p.split(/[/\\]/).pop()}</div>
-      </div>
-    `).join('');
-    return;
-  }
-
-  previewSection.style.display = 'none';
-  preview.innerHTML = '';
 }
-// ─── Extraction ───────────────────────────────────────────────────────────────
+// ????????? Extraction ───────────────────────────────────────────────────────────────
 
-const OPENAI_MODEL = 'gpt-4.1-mini';
-const OPENAI_MAX_RETRIES = 3;
-const DEFAULT_IMAGE_SLICE_COUNT = 4;
-const IMAGE_SLICE_OVERLAP_RATIO = 0.12;
-
-function getImageSliceCount() {
-  switch (appState.selectedStateCode) {
-    case 'MN':
-      return 2;
-    case 'OR':
-      return 4;
-    default:
-      return DEFAULT_IMAGE_SLICE_COUNT;
-  }
-}
-function getImageSliceOverlapRatio() {
-  switch (appState.selectedStateCode) {
-    case 'MN':
-      return 0;
-    case 'OR':
-      return IMAGE_SLICE_OVERLAP_RATIO;
-    default:
-      return IMAGE_SLICE_OVERLAP_RATIO;
-  }
-}
-function getOpenAIApiKey() {
-  return appState.settings.openaiApiKey || '';
-}
-
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function shouldRetryOpenAIRequest(status) {
-  return status === 408 || status === 409 || status === 429 || status >= 500;
-}
-
-function loadImageElement(src) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('Failed to load image for slicing.'));
-    img.src = src;
-  });
-}
-
-async function splitImageIntoVerticalSlices(image, pageLabel) {
-  const sourceUrl = `data:${image.mediaType};base64,${image.base64}`;
-  const img = await loadImageElement(sourceUrl);
-  const sliceCount = getImageSliceCount();
-
-  const baseSliceWidth = Math.ceil(img.width / sliceCount);
-  const overlapRatio = getImageSliceOverlapRatio();
-  const overlap = overlapRatio > 0 ? Math.max(20, Math.floor(baseSliceWidth * overlapRatio)) : 0;
-  const slices = [];
-
-  for (let i = 0; i < sliceCount; i++) {
-    const startX = i === 0 ? 0 : Math.max(0, i * baseSliceWidth - overlap);
-    const endX = i === sliceCount - 1
-      ? img.width
-      : Math.min(img.width, (i + 1) * baseSliceWidth + overlap);
-    const sliceWidth = Math.max(1, endX - startX);
-
-    const canvas = document.createElement('canvas');
-    canvas.width = sliceWidth;
-    canvas.height = img.height;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      throw new Error('Failed to create image crop canvas.');
-    }
-
-    ctx.drawImage(img, startX, 0, sliceWidth, img.height, 0, 0, sliceWidth, img.height);
-
-    const dataUrl = canvas.toDataURL('image/png');
-    slices.push({
-      mediaType: 'image/png',
-      base64: dataUrl.split(',')[1],
-      label: `${pageLabel} strip ${i + 1}/${sliceCount}`
-    });
-  }
-
-  return slices;
-}
-async function splitMinnesotaImageIntoStatusSlices(image, pageLabel, config) {
-  const sourceUrl = `data:${image.mediaType};base64,${image.base64}`;
-  const img = await loadImageElement(sourceUrl);
-  const blockCount = 2;
-  const blockWidth = img.width / blockCount;
-  const centerGap = Math.max(8, Math.floor(img.width * 0.012));
-  const blockInnerPadding = Math.max(6, Math.floor(blockWidth * 0.012));
-  const incomeSectionRatio = 0.36;
-  const valueSectionRatio = 0.64;
-  const statusCount = config.filingStatuses.length;
-  const slices = [];
-
-  for (let blockIndex = 0; blockIndex < blockCount; blockIndex++) {
-    const blockStart = Math.floor(blockIndex * blockWidth) + (blockIndex === 0 ? 0 : centerGap);
-    const blockEnd = Math.floor((blockIndex + 1) * blockWidth) - (blockIndex === blockCount - 1 ? 0 : centerGap);
-    const usableStart = Math.max(0, blockStart + blockInnerPadding);
-    const usableEnd = Math.min(img.width, blockEnd - blockInnerPadding);
-    const usableWidth = Math.max(1, usableEnd - usableStart);
-
-    const incomeWidth = Math.max(1, Math.floor(usableWidth * incomeSectionRatio));
-    const valueStart = usableStart + incomeWidth;
-    const valueWidth = Math.max(1, Math.floor(usableWidth * valueSectionRatio));
-    const statusWidth = valueWidth / statusCount;
-
-    for (let statusIndex = 0; statusIndex < statusCount; statusIndex++) {
-      const status = config.filingStatuses[statusIndex];
-      const statusStart = Math.max(0, Math.floor(valueStart + statusIndex * statusWidth) - 4);
-      const statusEnd = Math.min(img.width, Math.ceil(valueStart + (statusIndex + 1) * statusWidth) + 4);
-      const finalStatusWidth = Math.max(1, statusEnd - statusStart);
-      const canvas = document.createElement('canvas');
-
-      canvas.width = incomeWidth + finalStatusWidth;
-      canvas.height = img.height;
-
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        throw new Error('Failed to create Minnesota image crop canvas.');
-      }
-
-      // Compose the shared income columns with exactly one filing-status value column.
-      ctx.drawImage(img, usableStart, 0, incomeWidth, img.height, 0, 0, incomeWidth, img.height);
-      ctx.drawImage(img, statusStart, 0, finalStatusWidth, img.height, incomeWidth, 0, finalStatusWidth, img.height);
-
-      const dataUrl = canvas.toDataURL('image/png');
-      slices.push({
-        mediaType: 'image/png',
-        base64: dataUrl.split(',')[1],
-        label: `${pageLabel} block ${blockIndex + 1}/${blockCount} ${status.fileLabel}`,
-        statusKeys: [status.key]
-      });
-    }
-  }
-
-  return slices;
-}
-async function getImageExtractionSlices(image, pageLabel, config) {
-  if (appState.selectedStateCode === 'MN') {
-    return splitMinnesotaImageIntoStatusSlices(image, pageLabel, config);
-  }
-
-  return splitImageIntoVerticalSlices(image, pageLabel);
-}
-function extractOpenAIText(data) {
-  if (typeof data.output_text === 'string' && data.output_text.trim()) {
-    return data.output_text;
-  }
-
-  if (!Array.isArray(data.output)) return '';
-
-  return data.output
-    .flatMap(item => Array.isArray(item.content) ? item.content : [])
-    .filter(part => part.type === 'output_text' && typeof part.text === 'string')
-    .map(part => part.text)
-    .join('\n');
-}
-
-async function callOpenAIResponsesApi(requestBody) {
-  let lastError;
-
-  for (let attempt = 1; attempt <= OPENAI_MAX_RETRIES; attempt++) {
-    try {
-      const response = await fetch('https://api.openai.com/v1/responses', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${getOpenAIApiKey()}`
-        },
-        body: JSON.stringify(requestBody)
-      });
-
-      if (!response.ok) {
-        let message = `API error ${response.status}`;
-
-        try {
-          const err = await response.json();
-          message = err.error?.message || err.message || message;
-        } catch {
-          const fallback = await response.text();
-          if (fallback) message = fallback;
-        }
-
-        if (shouldRetryOpenAIRequest(response.status) && attempt < OPENAI_MAX_RETRIES) {
-          updateProgress(30, `OpenAI request failed (${response.status}). Retrying ${attempt}/${OPENAI_MAX_RETRIES - 1}...`);
-          await sleep(1000 * attempt);
-          continue;
-        }
-
-        throw new Error(message);
-      }
-
-      return await response.json();
-    } catch (error) {
-      lastError = error;
-      if (attempt >= OPENAI_MAX_RETRIES) break;
-      updateProgress(30, `OpenAI request interrupted. Retrying ${attempt}/${OPENAI_MAX_RETRIES - 1}...`);
-      await sleep(1000 * attempt);
-    }
-  }
-
-  throw lastError || new Error('OpenAI request failed.');
-}
-
-function parseExtractedJson(rawText) {
-  const clean = rawText.replace(/```json|```/g, '').trim();
-  return JSON.parse(clean);
-}
-
-function buildExtractionSchema(config) {
-  const properties = {};
-  const required = [];
-
-  for (const status of config.filingStatuses) {
-    required.push(status.key);
-    properties[status.key] = {
-      type: 'array',
-      description: `${status.label} rows in ascending income order.`,
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['income', 'value'],
-        properties: {
-          income: {
-            type: 'number',
-            description: 'Income key for this tax table row.'
-          },
-          value: {
-            type: 'number',
-            description: 'Tax amount for this tax table row.'
-          }
-        }
-      }
-    };
-  }
-
-  return {
-    type: 'object',
-    additionalProperties: false,
-    required,
-    properties
-  };
-}
-
-function normalizeExtractedData(parsed, config) {
-  const normalized = {};
-
-  for (const status of config.filingStatuses) {
-    const rows = parsed[status.key];
-    if (!Array.isArray(rows)) {
-      throw new Error(`Missing or invalid data for filing status: ${status.label}`);
-    }
-
-    const values = {};
-    for (const row of rows) {
-      const income = Number(row.income);
-      const value = Number(row.value);
-
-      if (!Number.isFinite(income) || !Number.isFinite(value)) {
-        throw new Error(`Invalid numeric value returned for filing status: ${status.label}`);
-      }
-
-      if (values[income] !== undefined) {
-        throw new Error(`Duplicate income bracket ${income} returned for filing status: ${status.label}`);
-      }
-
-      values[income] = value;
-    }
-
-    normalized[status.key] = values;
-  }
-
-  return normalized;
-}
 function mergeExtractedData(existing, incoming, config, pageLabel) {
   const merged = { ...existing };
 
@@ -572,68 +234,6 @@ async function extractPdfPageText(page) {
     .trim();
 }
 
-async function detectTaxTablePageRangeFromPdf(filePath) {
-  const fileResult = await window.api.readBinaryFileAsBase64(filePath);
-  if (!fileResult.success) {
-    throw new Error(fileResult.message || 'Failed to read selected PDF.');
-  }
-
-  const pdfjsLib = await getPdfJsLib();
-  const pdf = await pdfjsLib.getDocument({ data: base64ToUint8Array(fileResult.base64) }).promise;
-  const pagesToScan = Math.min(pdf.numPages, 8);
-
-  for (let pageNo = 1; pageNo <= pagesToScan; pageNo++) {
-    const page = await pdf.getPage(pageNo);
-    const text = await extractPdfPageText(page);
-    const match = text.match(/Tax\s+Tables?\s*(?:\.{2,}|\s)+(?:(\d+)\s*[-�]\s*(\d+)|(\d+))/i);
-    if (!match) continue;
-
-    const start = parseInt(match[1] || match[3], 10);
-    const end = parseInt(match[2] || match[3], 10);
-    if (Number.isInteger(start) && Number.isInteger(end) && start >= 1 && end >= start) {
-      return { start, end, foundOnPage: pageNo };
-    }
-  }
-
-  return null;
-}
-async function renderPdfPagesToImages(filePath, pageRange) {
-  const fileResult = await window.api.readBinaryFileAsBase64(filePath);
-  if (!fileResult.success) {
-    throw new Error(fileResult.message || 'Failed to read selected PDF.');
-  }
-
-  const pdfjsLib = await getPdfJsLib();
-  const pdf = await pdfjsLib.getDocument({ data: base64ToUint8Array(fileResult.base64) }).promise;
-  const images = [];
-
-  for (let pageNo = pageRange.start; pageNo <= pageRange.end; pageNo++) {
-    if (pageNo < 1 || pageNo > pdf.numPages) {
-      throw new Error(`Configured PDF page ${pageNo} is outside the document range (1-${pdf.numPages}).`);
-    }
-
-    const page = await pdf.getPage(pageNo);
-    const viewport = page.getViewport({ scale: 2.0 });
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      throw new Error('Failed to create PDF render canvas.');
-    }
-
-    canvas.width = Math.ceil(viewport.width);
-    canvas.height = Math.ceil(viewport.height);
-
-    await page.render({ canvasContext: ctx, viewport }).promise;
-    const dataUrl = canvas.toDataURL('image/png');
-    images.push({
-      mediaType: 'image/png',
-      base64: dataUrl.split(',')[1],
-      label: `page ${pageNo}`
-    });
-  }
-
-  return images;
-}
 function parseIntegerText(str) {
   if (typeof str !== 'string') return null;
   const clean = str.trim();
@@ -666,31 +266,29 @@ function groupPdfTextItemsByRow(items, tolerance = 1.5) {
 function getMinnesotaPdfBlockColumnRanges(pageWidth) {
   const byRatio = (start, end) => [pageWidth * start, pageWidth * end];
   return [
-    {
-      atLeast: byRatio(0.08, 0.15),
-      lessThan: byRatio(0.155, 0.23),
-      Single: byRatio(0.235, 0.305),
-      MFJ: byRatio(0.315, 0.395),
-      MFS: byRatio(0.385, 0.465),
-      HOH: byRatio(0.455, 0.535)
-    },
-    {
-      atLeast: byRatio(0.53, 0.605),
-      lessThan: byRatio(0.61, 0.69),
-      Single: byRatio(0.685, 0.765),
-      MFJ: byRatio(0.755, 0.84),
-      MFS: byRatio(0.83, 0.915),
-      HOH: byRatio(0.905, 0.99)
-    }
+    byRatio(0.08, 0.535),
+    byRatio(0.53, 0.99)
   ];
 }
-function findNumericItemInRange(items, range) {
-  const matches = items
+function findNumericItemsInRange(items, range) {
+  return items
     .filter(item => item.x >= range[0] && item.x <= range[1])
     .map(item => ({ ...item, numericValue: parseIntegerText(item.str) }))
-    .filter(item => item.numericValue !== null);
+    .filter(item => item.numericValue !== null)
+    .sort((a, b) => a.x - b.x);
+}
+function findMinnesotaValueWindow(numericItems) {
+  for (let i = 0; i <= numericItems.length - 6; i++) {
+    const window = numericItems.slice(i, i + 6);
+    const [lower, upper, single, mfj, mfs, hoh] = window;
 
-  return matches.length > 0 ? matches[0] : null;
+    if (lower.numericValue >= upper.numericValue) continue;
+    if (window.some(item => !Number.isFinite(item.numericValue))) continue;
+
+    return { lower, upper, single, mfj, mfs, hoh };
+  }
+
+  return null;
 }
 function parseMinnesotaPdfRows(textItems, pageWidth) {
   const rows = groupPdfTextItemsByRow(textItems.map(item => ({
@@ -698,21 +296,18 @@ function parseMinnesotaPdfRows(textItems, pageWidth) {
     x: item.transform?.[4],
     y: item.transform?.[5]
   })));
-  const columnSets = getMinnesotaPdfBlockColumnRanges(pageWidth);
+  const blockRanges = getMinnesotaPdfBlockColumnRanges(pageWidth);
   const parsed = [];
 
   for (const row of rows) {
-    for (const columns of columnSets) {
-      const lower = findNumericItemInRange(row.items, columns.atLeast);
-      const upper = findNumericItemInRange(row.items, columns.lessThan);
-      const single = findNumericItemInRange(row.items, columns.Single);
-      const mfj = findNumericItemInRange(row.items, columns.MFJ);
-      const mfs = findNumericItemInRange(row.items, columns.MFS);
-      const hoh = findNumericItemInRange(row.items, columns.HOH);
+    for (const range of blockRanges) {
+      const numericItems = findNumericItemsInRange(row.items, range);
+      if (numericItems.length < 6) continue;
 
-      if (!lower || !upper || !single || !mfj || !mfs || !hoh) continue;
-      if (lower.numericValue >= upper.numericValue) continue;
+      const valueWindow = findMinnesotaValueWindow(numericItems);
+      if (!valueWindow) continue;
 
+      const { lower, upper, single, mfj, mfs, hoh } = valueWindow;
       parsed.push({
         income: lower.numericValue,
         upperIncome: upper.numericValue,
@@ -797,9 +392,6 @@ function parseOrPdfRows(textItems, pageWidth) {
 
   return parsed;
 }
-function canUseDeterministicPdfParser(config) {
-  return Boolean(appState.selectedPdfPath) && ['MN', 'OR'].includes(config?.code);
-}
 async function extractPdfDeterministically(filePath, pageRange, config, lookUpTypes) {
   const fileResult = await window.api.readBinaryFileAsBase64(filePath);
   if (!fileResult.success) {
@@ -835,119 +427,28 @@ async function extractPdfDeterministically(filePath, pageRange, config, lookUpTy
 
   return mergedData;
 }
-async function extractSinglePageData(image, prompt, config, pageLabel) {
-  const input = [{
-    role: 'user',
-    content: [
-      { type: 'input_text', text: prompt },
-      {
-        type: 'input_image',
-        detail: 'high',
-        image_url: `data:${image.mediaType};base64,${image.base64}`
-      }
-    ]
-  }];
-
-  const data = await callOpenAIResponsesApi({
-    model: OPENAI_MODEL,
-    input,
-    text: {
-      format: {
-        type: 'json_schema',
-        name: 'tax_table_extraction',
-        strict: true,
-        schema: buildExtractionSchema(config)
-      }
-    }
-  });
-
-  try {
-    return normalizeExtractedData(parseExtractedJson(extractOpenAIText(data)), config);
-  } catch {
-    throw new Error(`OpenAI returned invalid structured data for ${pageLabel}.`);
-  }
-}
-function buildExtractionPrompt(config, lookUpTypes) {
-  const statusLabels = config.filingStatuses.map(s => `"${s.key}" = ${s.label}`).join(', ');
-  const boundaryInstructions = config.filingStatuses.map(status => {
-    const lookUpType = lookUpTypes[status.key];
-    if (lookUpType === 'UpperBoundary') {
-      return `- "${status.key}" uses UPPER BOUNDARY keys: assign the tax value to the "less than" (upper) income key.\n  Example: row "at least $20, less than $50, tax = $2" -> key 50 = 2`;
-    }
-    return `- "${status.key}" uses LOWER BOUNDARY keys: assign the tax value to the "at least" (lower) income key.\n  Example: row "at least $20, less than $50, tax = $2" -> key 20 = 2`;
-  }).join('\n');
-
-  const singleStatusCropRule = config.filingStatuses.length === 1
-    ? `\nThe crop includes the shared income columns plus exactly one filing-status value column for ${config.filingStatuses[0].label}.\nRead only the printed numbers in that one filing-status column.\nDo not infer or copy values from neighboring filing statuses.\n`
-    : '';
-
-  return `You are extracting data from ${appState.selectedStateConfig.name} ${appState.taxYear} tax table source pages for ${appState.selectedStateConfig.formName}.
-
-The table has these filing status columns: ${statusLabels}.
-${singleStatusCropRule}
-Return data that matches the provided JSON schema.
-For each filing status, return an array of row objects with this shape:
-{ "income": 0, "value": 0 }
-
-Key assignment rules per filing status:
-${boundaryInstructions}
-
-Critical rule - do NOT shift values:
-Each tax amount belongs to the row it appears on. Assign it to THAT row's key, not the next row's key.
-For LowerBoundary: the key is the "at least" value of the SAME row.
-
-The table may have irregular intervals at the very beginning (e.g. $0, $20, $50 before switching to $100 increments).
-These follow the same rule. For example if the first rows are:
-  Row 1: at least $0,  less than $20,  tax = $0  -> { "income": 0, "value": 0 }
-  Row 2: at least $20, less than $50,  tax = $2  -> { "income": 20, "value": 2 }
-  Row 3: at least $50, less than $100, tax = $4  -> { "income": 50, "value": 4 }
-  Row 4: at least $100, less than $200, tax = $7 -> { "income": 100, "value": 7 }
-
-Additional rules:
-- Values are tax amounts as numbers, not strings.
-- Include every row from every selected tax table page. Do not skip any rows.
-- Keep each filing status array sorted by income ascending.
-- Always return every filing status key from the schema, even if one page is harder to read.`;
-}
 async function extractData() {
   const config = appState.selectedStateConfig;
-  const useDeterministicPdfParser = canUseDeterministicPdfParser(config);
 
-  if (appState.selectedImages.length === 0 && !appState.selectedPdfPath) {
-    showToast('Please select screenshots or a PDF first.', 'error');
+  if (!appState.selectedPdfPath) {
+    showToast('Please select a PDF first.', 'error');
     return;
   }
 
-  if (!useDeterministicPdfParser && !getOpenAIApiKey()) {
-    showToast('Please add your OpenAI API key in Settings first.', 'error');
-    openSettings();
+  const pageRange = getEffectivePdfPageRange();
+  if (!pageRange) {
+    showToast('Please enter valid PDF start and end pages first.', 'error');
+    return;
+  }
+
+  if (!['MN', 'OR'].includes(config?.code)) {
+    showToast('Only Oregon and Minnesota are supported.', 'error');
     return;
   }
 
   setExtracting(true);
 
   try {
-    let imageData = [];
-    let pageRange = null;
-
-    if (appState.selectedPdfPath) {
-      pageRange = getEffectivePdfPageRange();
-      if (!pageRange) {
-        throw new Error('Please enter a valid PDF start and end page range.');
-      }
-
-      if (!useDeterministicPdfParser) {
-        updateProgress(5, 'Rendering selected PDF pages...');
-        imageData = await renderPdfPagesToImages(appState.selectedPdfPath, pageRange);
-      }
-    } else {
-      for (const imgPath of appState.selectedImages) {
-        const result = await window.api.readImageAsBase64(imgPath);
-        if (!result.success) throw new Error(`Failed to read image: ${imgPath}`);
-        imageData.push({ ...result, label: imgPath.split(/[/\\]/).pop() });
-      }
-    }
-
     updateProgress(10, 'Reading JSON file metadata...');
 
     const lookUpTypes = {};
@@ -963,56 +464,14 @@ async function extractData() {
       }
     }
 
-    if (useDeterministicPdfParser) {
-      updateProgress(20, `Parsing ${config.name} PDF text directly...`);
-      appState.extractedData = await extractPdfDeterministically(appState.selectedPdfPath, pageRange, config, lookUpTypes);
-
-      updateProgress(85, 'Comparing with current JSON files...');
-      await buildDiff();
-
-      updateProgress(100, 'Complete!');
-      setTimeout(() => setExtracting(false), 800);
-      return;
-    }
-
-    updateProgress(20, 'Preparing request for OpenAI...');
-
-    const slicedImages = [];
-    for (let i = 0; i < imageData.length; i++) {
-      const pageLabel = `page ${i + 1}`;
-      updateProgress(20, `Preparing ${pageLabel} strips...`);
-      const pageSlices = await getImageExtractionSlices(imageData[i], pageLabel, config);
-      slicedImages.push(...pageSlices);
-    }
-
-    const prompt = buildExtractionPrompt(config, lookUpTypes);
-
-    let mergedData = {};
-
-    for (let i = 0; i < slicedImages.length; i++) {
-      const slice = slicedImages[i];
-      const startPct = 30 + Math.floor((i / slicedImages.length) * 40);
-      const endPct = 30 + Math.floor(((i + 1) / slicedImages.length) * 40);
-
-      updateProgress(startPct, `OpenAI is reading ${slice.label} of ${slicedImages.length}...`);
-      const sliceConfig = slice.statusKeys?.length
-        ? { ...config, filingStatuses: config.filingStatuses.filter(status => slice.statusKeys.includes(status.key)) }
-        : config;
-      const slicePrompt = sliceConfig === config ? prompt : buildExtractionPrompt(sliceConfig, lookUpTypes);
-      const sliceData = await extractSinglePageData(slice, slicePrompt, sliceConfig, slice.label);
-
-      updateProgress(Math.max(startPct + 1, endPct - 1), `Merging ${slice.label} results...`);
-      mergedData = mergeExtractedData(mergedData, sliceData, config, slice.label);
-    }
-
-    appState.extractedData = mergedData;
+    updateProgress(20, `Parsing ${config.name} PDF text directly...`);
+    appState.extractedData = await extractPdfDeterministically(appState.selectedPdfPath, pageRange, config, lookUpTypes);
 
     updateProgress(85, 'Comparing with current JSON files...');
     await buildDiff();
 
     updateProgress(100, 'Complete!');
     setTimeout(() => setExtracting(false), 800);
-
   } catch (error) {
     setExtracting(false);
     showToast(`Extraction failed: ${error.message}`, 'error');
@@ -1043,6 +502,7 @@ async function buildDiff() {
     let matched = 0;
     let missing = 0;
     let missingFromExtraction = 0;
+    const missingExtractedIncomes = [];
     let minExtractedIncome = null;
     let maxExtractedIncome = null;
 
@@ -1069,6 +529,7 @@ async function buildDiff() {
     for (const incomeStr of Object.keys(currentValues)) {
       if (newValues[incomeStr] === undefined) {
         missingFromExtraction++;
+        missingExtractedIncomes.push(Number(incomeStr));
       }
     }
 
@@ -1077,6 +538,7 @@ async function buildDiff() {
       matched,
       missing,
       missingFromExtraction,
+      missingExtractedIncomes,
       totalExtracted: Object.keys(newValues).length,
       totalCurrent: Object.keys(currentValues).length,
       minExtractedIncome,
@@ -1171,8 +633,12 @@ function renderDiffPanel(status, diff) {
     </div>
   `;
 
+  const missingIncomeDebug = diff.missingExtractedIncomes?.length
+    ? ` Missing incomes: ${diff.missingExtractedIncomes.map(income => `${income.toLocaleString()}`).join(', ')}.`
+    : '';
+
   const extractionWarning = diff.missingFromExtraction > 0
-    ? `<div class="diff-error">Warning: ${diff.missingFromExtraction} file rows were not returned by extraction.${diff.minExtractedIncome !== null ? ` Extracted range: $${diff.minExtractedIncome.toLocaleString()} to $${diff.maxExtractedIncome.toLocaleString()}.` : ''}</div>`
+    ? `<div class="diff-error">Warning: ${diff.missingFromExtraction} file rows were not returned by extraction.${diff.minExtractedIncome !== null ? ` Extracted range: ${diff.minExtractedIncome.toLocaleString()} to ${diff.maxExtractedIncome.toLocaleString()}.` : ''}${missingIncomeDebug}</div>`
     : '';
 
   if (diff.changed.length === 0) {
@@ -1286,52 +752,13 @@ function renderExtractedDataSection() {
   `;
 }
 
-// ─── Settings panel ───────────────────────────────────────────────────────────
-
-function openSettings() {
-  document.getElementById('settingsPanel').classList.add('open');
-  document.getElementById('apiKeyInput').value = getOpenAIApiKey();
-}
-
-function closeSettings() {
-  document.getElementById('settingsPanel').classList.remove('open');
-}
-
-async function saveSettings() {
-  const apiKey = document.getElementById('apiKeyInput').value.trim();
-  appState.settings.openaiApiKey = apiKey;
-  await window.api.saveSettings(appState.settings);
-  updateApiKeyIndicator();
-  closeSettings();
-  showToast('Settings saved.', 'success');
-}
-
-function updateApiKeyIndicator() {
-  const indicator = document.getElementById('apiKeyIndicator');
-  const hasKey = Boolean(getOpenAIApiKey());
-  indicator.className = `api-key-dot ${hasKey ? 'connected' : 'missing'}`;
-  indicator.title = hasKey ? 'API key configured' : 'No API key — click Settings';
-}
-
-function toggleApiKeyVisibility() {
-  const input = document.getElementById('apiKeyInput');
-  const btn = document.getElementById('toggleApiKeyBtn');
-  if (input.type === 'password') {
-    input.type = 'text';
-    btn.textContent = 'Hide';
-  } else {
-    input.type = 'password';
-    btn.textContent = 'Show';
-  }
-}
-
-// ─── UI helpers ───────────────────────────────────────────────────────────────
+// ????????? UI helpers ───────────────────────────────────────────────────────────────
 
 function setExtracting(active) {
   const btn = document.getElementById('extractBtn');
   const progress = document.getElementById('extractionProgress');
   btn.disabled = active;
-  btn.textContent = active ? 'Extracting...' : 'Extract Data from Images';
+  btn.textContent = active ? 'Extracting...' : 'Extract Data from PDF';
   progress.style.display = active ? 'block' : 'none';
   if (!active) updateProgress(0, '');
 }
@@ -1349,7 +776,7 @@ function updateProgress(pct, msg) {
 
 function updateActionButtons() {
   const config = appState.selectedStateConfig;
-  const hasSource = appState.selectedImages.length > 0 || Boolean(appState.selectedPdfPath);
+  const hasSource = Boolean(appState.selectedPdfPath) && Boolean(getEffectivePdfPageRange());
   const hasExtracted = Boolean(appState.extractedData);
   const allPathsSet = config
     ? config.filingStatuses.every(s => appState.filePaths[s.key])
@@ -1365,6 +792,12 @@ function showToast(message, type = 'info') {
   toast.textContent = message;
   toast.className = `toast toast-${type} show`;
   clearTimeout(toastTimeout);
+
+  if (type === 'error') {
+    toastTimeout = null;
+    return;
+  }
+
   toastTimeout = setTimeout(() => toast.classList.remove('show'), 4000);
 }
 
@@ -1375,30 +808,51 @@ function bindEvents() {
 
   document.getElementById('taxYearSelect').addEventListener('change', e => {
     appState.taxYear = parseInt(e.target.value);
+    renderSelectedSource();
+    updateActionButtons();
   });
 
   document.getElementById('regulatoryYearInput').addEventListener('change', async e => {
     appState.regulatoryYear = parseInt(e.target.value);
     await loadFilePaths();
     renderFilePickers();
+    updateActionButtons();
   });
 
-  document.getElementById('selectImagesBtn').addEventListener('click', selectImages);
   document.getElementById('selectPdfBtn').addEventListener('click', selectPdf);
-  document.getElementById('pdfPageStartInput').addEventListener('input', e => { appState.pdfPageRangeOverride.start = e.target.value.trim(); appState.pdfPageRangeSource = 'manual override'; renderSelectedSource(); updateActionButtons(); });
-  document.getElementById('pdfPageEndInput').addEventListener('input', e => { appState.pdfPageRangeOverride.end = e.target.value.trim(); appState.pdfPageRangeSource = 'manual override'; renderSelectedSource(); updateActionButtons(); });
+  document.getElementById('pdfPageStartInput').addEventListener('input', e => { appState.pdfPageRangeOverride.start = e.target.value.trim(); renderSelectedSource(); updateActionButtons(); });
+  document.getElementById('pdfPageEndInput').addEventListener('input', e => { appState.pdfPageRangeOverride.end = e.target.value.trim(); renderSelectedSource(); updateActionButtons(); });
   document.getElementById('extractBtn').addEventListener('click', extractData);
   document.getElementById('updateJsonBtn').addEventListener('click', updateJsonFiles);
-  document.getElementById('settingsBtn').addEventListener('click', openSettings);
-  document.getElementById('closeSettingsBtn').addEventListener('click', closeSettings);
-  document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);
-  document.getElementById('toggleApiKeyBtn').addEventListener('click', toggleApiKeyVisibility);
-  document.getElementById('settingsOverlay').addEventListener('click', closeSettings);
 }
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 
-init();
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    appState,
+    parseIntegerText,
+    groupPdfTextItemsByRow,
+    findNumericItemsInRange,
+    findMinnesotaValueWindow,
+    parseMinnesotaPdfRows,
+    parseOrPdfRows,
+    normalizeDeterministicRowsToData,
+    mergeExtractedData,
+    getEffectivePdfPageRange,
+    renderSelectedSource,
+    updateActionButtons,
+    showDiffTab
+  };
+}
+
+if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+  init();
+}
+
+
+
+
 
 
 

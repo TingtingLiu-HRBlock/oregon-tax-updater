@@ -1,9 +1,10 @@
 {
   "name": "state-tax-updater",
   "version": "2.0.0",
-  "description": "Multi-state tax table updater with PDF and screenshot extraction",
+  "description": "Multi-state tax table updater with deterministic PDF extraction",
   "main": "main.js",
   "scripts": {
+    "test": "node --test",
     "start": "electron .",
     "build": "electron-builder"
   },
