@@ -1,103 +1,184 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: file:; connect-src https://api.openai.com;">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Oregon Tax Table Updater 2024</title>
+  <title>State Tax Table Updater</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div class="container">
-    <header>
-      <h1>🏛️ Oregon Tax Table Updater</h1>
-      <p class="subtitle">Extract tax tables from screenshots and update JSON files automatically</p>
-    </header>
 
-    <div class="main-content">
-      <!-- Step 1: Upload Screenshots -->
-      <section class="card">
-        <div class="step-header">
-          <span class="step-number">1</span>
-          <h2>Upload Tax Table Screenshots</h2>
+  <!-- Settings overlay -->
+  <div id="settingsOverlay" class="overlay"></div>
+  <div id="settingsPanel" class="settings-panel">
+    <div class="settings-header">
+      <h3>Settings</h3>
+      <button id="closeSettingsBtn" class="btn-icon">✕</button>
+    </div>
+    <div class="settings-body">
+      <div class="form-group">
+        <label for="apiKeyInput">OpenAI API Key</label>
+        <p class="form-hint">Used to extract tax data from screenshots via the OpenAI vision API. Your key is stored locally on this machine only.</p>
+        <div class="api-key-row">
+          <input type="password" id="apiKeyInput" placeholder="sk-proj-..." autocomplete="off" spellcheck="false" />
+          <button id="toggleApiKeyBtn" class="btn btn-sm btn-outline">Show</button>
         </div>
-        <p class="instruction">Upload 1-3 screenshots of the Oregon tax table pages</p>
-        <button id="selectImagesBtn" class="btn btn-primary">
-          📁 Select Images
+      </div>
+    </div>
+    <div class="settings-footer">
+      <button id="saveSettingsBtn" class="btn btn-primary">Save Settings</button>
+    </div>
+  </div>
+
+  <!-- Main layout -->
+  <div class="app-layout">
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-mark">TAX</div>
+        <div class="brand-text">
+          <span class="brand-title">Table Updater</span>
+          <span class="brand-sub">State Tax Tool</span>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-section">
+          <div class="nav-label">Configuration</div>
+
+          <div class="form-group">
+            <label for="stateSelect">State</label>
+            <select id="stateSelect" class="select-input"></select>
+          </div>
+
+          <div class="form-group">
+            <label for="taxYearSelect">Tax Year</label>
+            <select id="taxYearSelect" class="select-input"></select>
+          </div>
+
+          <div class="form-group">
+            <label for="regulatoryYearInput">
+              Regulatory Folder Year
+              <span class="label-hint" title="The year in the OCE-Regulatory-XXXX folder name">?</span>
+            </label>
+            <input type="number" id="regulatoryYearInput" class="text-input" min="2020" max="2035" />
+          </div>
+        </div>
+
+        <div class="nav-section">
+          <div class="nav-label">JSON Files</div>
+          <div id="filePickersContainer" class="file-pickers"></div>
+        </div>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button id="settingsBtn" class="btn-settings">
+          <span id="apiKeyIndicator" class="api-key-dot missing"></span>
+          Settings
         </button>
-        <div id="imagePreview" class="image-preview"></div>
+      </div>
+    </aside>
+
+    <!-- Main content -->
+    <main class="main-content">
+
+      <!-- Step 1: Upload -->
+      <section class="content-section">
+        <div class="section-header">
+          <div class="step-badge">01</div>
+          <div>
+            <h2 class="section-title">Upload Source</h2>
+            <p class="section-subtitle">Select screenshots or an instruction PDF for the selected state and year.</p>
+          </div>
+        </div>
+
+        <div class="upload-area" id="uploadArea">
+          <button id="selectImagesBtn" class="btn btn-primary">
+            <span class="btn-icon-left">+</span> Select Images
+          </button>
+          <button id="selectPdfBtn" class="btn btn-outline">
+            <span class="btn-icon-left">+</span> Select PDF
+          </button>
+          <p class="upload-hint">JPG, PNG, BMP, GIF, and PDF supported · PDF uses state-configured tax table pages when available</p>
+        </div>
+
+        <div id="pdfSelectionSection" style="display:none">
+          <div id="pdfSelectionSummary" class="diff-error"></div>
+          <div class="api-key-row" style="margin-top:12px; gap:12px; align-items:end; flex-wrap:wrap;">
+            <div class="form-group" style="margin:0; min-width:140px;">
+              <label for="pdfPageStartInput">PDF Start Page</label>
+              <input type="number" id="pdfPageStartInput" class="text-input" min="1" step="1" />
+            </div>
+            <div class="form-group" style="margin:0; min-width:140px;">
+              <label for="pdfPageEndInput">PDF End Page</label>
+              <input type="number" id="pdfPageEndInput" class="text-input" min="1" step="1" />
+            </div>
+            <p class="upload-hint" style="margin:0; max-width:420px;">Override the built-in page range when a new instruction booklet uses different tax table pages.</p>
+          </div>
+        </div>
+
+        <div id="imagePreviewSection" style="display:none">
+          <div id="imagePreview" class="image-grid"></div>
+        </div>
       </section>
 
-      <!-- Step 2: Extract Data -->
-      <section class="card">
-        <div class="step-header">
-          <span class="step-number">2</span>
-          <h2>Extract Tax Table Data</h2>
+      <!-- Step 2: Extract -->
+      <section class="content-section">
+        <div class="section-header">
+          <div class="step-badge">02</div>
+          <div>
+            <h2 class="section-title">Extract Data</h2>
+            <p class="section-subtitle">OpenAI Vision reads the tax table and extracts all income brackets.</p>
+          </div>
         </div>
-        <p class="instruction">Process images to extract tax table values</p>
-        <button id="extractDataBtn" class="btn btn-primary" disabled>
-          🔍 Extract Data from Images
+
+        <button id="extractBtn" class="btn btn-primary" disabled>
+          Extract Data
         </button>
-        <div id="extractionProgress" class="progress-container" style="display: none;">
+
+        <div id="extractionProgress" class="progress-block" style="display:none">
           <div class="progress-bar">
             <div id="progressFill" class="progress-fill"></div>
           </div>
-          <p id="progressText" class="progress-text">Processing...</p>
+          <div id="progressText" class="progress-text"></div>
+        </div>
+
+        <div id="extractedDataSection" style="display:none">
+          <div id="extractionSummary" class="extraction-summary"></div>
         </div>
       </section>
 
-      <!-- Step 3: Review Extracted Data -->
-      <section class="card">
-        <div class="step-header">
-          <span class="step-number">3</span>
-          <h2>Review Extracted Data</h2>
-        </div>
-        <div id="dataPreview" class="data-preview">
-          <p class="placeholder-text">Extracted data will appear here...</p>
-        </div>
-        <button id="exportTextBtn" class="btn btn-secondary" disabled>
-          💾 Export as Text File
-        </button>
-      </section>
+      <!-- Step 3: Review diff -->
+      <div id="diffSection" style="display:none"></div>
 
-      <!-- Step 4: Update JSON Files -->
-      <section class="card">
-        <div class="step-header">
-          <span class="step-number">4</span>
-          <h2>Update JSON Files</h2>
-        </div>
-        <p class="instruction">Update tax table JSON files with extracted data</p>
-        <div class="file-paths">
-          <div class="file-path-item">
-            <strong>Single:</strong>
-            <div class="path-row">
-              <code id="singlePathCode">C:\TaxEngine\OCE-Regulatory-2025\Source\OR\Utils\Tables\TaxTableForSingle.table.json</code>
-              <button id="selectSingleJsonBtn" class="btn btn-secondary btn-small">
-                Select Single JSON
-              </button>
-            </div>
-          </div>
-          <div class="file-path-item">
-            <strong>Joint:</strong>
-            <div class="path-row">
-              <code id="jointPathCode">C:\TaxEngine\OCE-Regulatory-2025\Source\OR\Utils\Tables\TaxTableForJoint.table.json</code>
-              <button id="selectJointJsonBtn" class="btn btn-secondary btn-small">
-                Select Joint JSON
-              </button>
-            </div>
+      <!-- Step 4: Update -->
+      <section class="content-section">
+        <div class="section-header">
+          <div class="step-badge">03</div>
+          <div>
+            <h2 class="section-title">Update JSON Files</h2>
+            <p class="section-subtitle">Writes new values to all filing status files. Review the diff above before proceeding.</p>
           </div>
         </div>
+
         <button id="updateJsonBtn" class="btn btn-success" disabled>
-          ✅ Update Both JSON Files
+          Update JSON Files
         </button>
-        <div id="updateStatus" class="status-message"></div>
       </section>
-    </div>
 
-    <footer>
-      <p>Oregon Tax Table Updater v1.0.1 | Tax Year 2024</p>
-    </footer>
+    </main>
   </div>
+
+  <!-- Toast notification -->
+  <div id="toast" class="toast"></div>
 
   <script src="renderer.js"></script>
 </body>
 </html>
+
+
+
