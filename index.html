@@ -10,10 +10,7 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <!-- Main layout -->
   <div class="app-layout">
-
-    <!-- Sidebar -->
     <aside class="sidebar">
       <div class="sidebar-brand">
         <div class="brand-mark">TAX</div>
@@ -37,12 +34,10 @@
             <select id="taxYearSelect" class="select-input"></select>
           </div>
 
-          <div class="form-group">
-            <label for="regulatoryYearInput">
-              Regulatory Folder Year
-              <span class="label-hint" title="The year in the OCE-Regulatory-XXXX folder name">?</span>
-            </label>
-            <input type="number" id="regulatoryYearInput" class="text-input" min="2020" max="2035" />
+          <div class="form-group" id="workflowGroup" style="display:none;">
+            <label for="workflowSelect">Workflow</label>
+            <select id="workflowSelect" class="select-input"></select>
+            <div class="form-hint" id="workflowHint"></div>
           </div>
         </div>
 
@@ -53,16 +48,13 @@
       </nav>
     </aside>
 
-    <!-- Main content -->
     <main class="main-content">
-
-      <!-- Step 1: Upload -->
       <section class="content-section">
         <div class="section-header">
           <div class="step-badge">01</div>
           <div>
             <h2 class="section-title">Upload Source</h2>
-            <p class="section-subtitle">Select an instruction PDF for the selected state and year.</p>
+            <p class="section-subtitle" id="sourceSubtitle">Select an instruction PDF for the selected state and year.</p>
           </div>
         </div>
 
@@ -70,11 +62,11 @@
           <button id="selectPdfBtn" class="btn btn-primary">
             <span class="btn-icon-left">+</span> Select PDF
           </button>
-          <p class="upload-hint">PDF only - enter the start and end tax-table pages manually</p>
+          <p class="upload-hint" id="uploadHint">PDF only - enter the start and end tax-table pages manually</p>
         </div>
 
         <div id="pdfSelectionSection" style="display:none">
-          <div id="pdfSelectionSummary" class="diff-error"></div>
+          <div id="pdfSelectionSummary" class="selection-summary"></div>
           <div class="api-key-row" style="margin-top:12px; gap:12px; align-items:end; flex-wrap:wrap;">
             <div class="form-group" style="margin:0; min-width:140px;">
               <label for="pdfPageStartInput">PDF Start Page</label>
@@ -84,18 +76,17 @@
               <label for="pdfPageEndInput">PDF End Page</label>
               <input type="number" id="pdfPageEndInput" class="text-input" min="1" step="1" required />
             </div>
-            <p class="upload-hint" style="margin:0; max-width:420px;">Enter the exact tax-table pages from the selected PDF before running extraction.</p>
+            <p class="upload-hint" id="pageRangeHint" style="margin:0; max-width:420px;">Enter the exact tax-table pages from the selected PDF before running extraction.</p>
           </div>
         </div>
       </section>
 
-      <!-- Step 2: Extract -->
       <section class="content-section">
         <div class="section-header">
           <div class="step-badge">02</div>
           <div>
-            <h2 class="section-title">Extract Data</h2>
-            <p class="section-subtitle">The built-in parser reads the selected PDF pages and extracts all income brackets.</p>
+            <h2 class="section-title" id="extractSectionTitle">Extract Data</h2>
+            <p class="section-subtitle" id="extractSectionSubtitle">The built-in parser reads the selected PDF pages and extracts all income brackets.</p>
           </div>
         </div>
 
@@ -115,16 +106,15 @@
         </div>
       </section>
 
-      <!-- Step 3: Review diff -->
       <div id="diffSection" style="display:none"></div>
+      <div id="marriageCreditSection" style="display:none"></div>
 
-      <!-- Step 4: Update -->
       <section class="content-section">
         <div class="section-header">
           <div class="step-badge">03</div>
           <div>
-            <h2 class="section-title">Update JSON Files</h2>
-            <p class="section-subtitle">Writes new values to all filing status files. Review the diff above before proceeding.</p>
+            <h2 class="section-title" id="updateSectionTitle">Update JSON Files</h2>
+            <p class="section-subtitle" id="updateSectionSubtitle">Writes new values to all filing status files. Review the diff above before proceeding.</p>
           </div>
         </div>
 
@@ -132,16 +122,11 @@
           Update JSON Files
         </button>
       </section>
-
     </main>
   </div>
 
-  <!-- Toast notification -->
   <div id="toast" class="toast"></div>
 
   <script src="renderer.js"></script>
 </body>
 </html>
-
-
-

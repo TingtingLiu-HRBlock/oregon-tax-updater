@@ -6,6 +6,7 @@ const OR_CONFIG = require('../States/OR.js');
 const {
   appState,
   parseMinnesotaPdfRows,
+  parseMarriageCreditFromFullText,
   parseOrPdfRows,
   normalizeDeterministicRowsToData,
   getEffectivePdfPageRange,
@@ -18,7 +19,6 @@ function resetAppState() {
   appState.selectedStateCode = null;
   appState.selectedStateConfig = null;
   appState.taxYear = 2024;
-  appState.regulatoryYear = 2024;
   appState.filePaths = {};
   appState.selectedPdfPath = null;
   appState.pdfPageRangeOverride = { start: '', end: '' };
@@ -75,6 +75,26 @@ test('MN scenario regression: page 32 row still parses when the Minnesota column
       }
     }
   ]);
+});
+
+test('MN M1MA regression: marriage credit fallback preserves 2025 bracket keys without offset', () => {
+  const parsed = parseMarriageCreditFromFullText([
+    { str: 'If line 6 is:' },
+    { str: 'and line 7 is at least:' },
+    { str: '$48,000 68,000 88,000 108,000 128,000 148,000 168,000 188,000 208,000 228,000 248,000 268,000 288,000 308,000 328,000' },
+    { str: 'your credit amount is:' },
+    { str: '$31,000 33,000 29 29 29 29 0 0 0 0 0 0 0 0 0 0 0 33,000 35,000 58 58 58 58 0 0 0 0 0 0 0 0 0 0 0 121,000 123,000 0 0 0 0 230 253 253 346 514 514 514 514 514 268 20' },
+    { str: '2025 Schedule M1MA Instructions' }
+  ]);
+
+  assert.equal(parsed.rows[0].separateIncome, 31000);
+  assert.equal(parsed.rows[0].jointIncome, 48000);
+  assert.equal(parsed.rows[0].value, 29);
+  assert.equal(parsed.rows[1].separateIncome, 31000);
+  assert.equal(parsed.rows[1].jointIncome, 68000);
+  assert.equal(parsed.rows.at(-1).separateIncome, 121000);
+  assert.equal(parsed.rows.at(-1).jointIncome, 328000);
+  assert.equal(parsed.rows.at(-1).value, 20);
 });
 
 test('OR scenario checkpoints: Oregon parser keeps representative values through 49,900', () => {
