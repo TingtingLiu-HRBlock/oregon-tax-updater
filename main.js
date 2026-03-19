@@ -2,16 +2,13 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs').promises;
 const { getAllStates, getState } = require('./States');
+const { buildDefaultPaths, buildStorageKey, normalizeSavedPaths } = require('./pathUtils');
 
 let mainWindow;
-
-// ─── Config file paths ───────────────────────────────────────────────────────
 
 function getConfigPath(filename) {
   return path.join(app.getPath('userData'), filename);
 }
-
-// ─── Window ──────────────────────────────────────────────────────────────────
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -41,8 +38,6 @@ app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
 
-// ─── State registry handlers ─────────────────────────────────────────────────
-
 ipcMain.handle('get-all-states', () => {
   return getAllStates().map(s => ({ code: s.code, name: s.name }));
 });
@@ -50,8 +45,6 @@ ipcMain.handle('get-all-states', () => {
 ipcMain.handle('get-state-config', (event, code) => {
   return getState(code);
 });
-
-// ─── JSON file path persistence ──────────────────────────────────────────────
 
 async function loadAllJsonPaths() {
   try {
@@ -66,36 +59,21 @@ async function saveAllJsonPaths(allPaths) {
   await fs.writeFile(getConfigPath('json-paths.json'), JSON.stringify(allPaths, null, 2), 'utf-8');
 }
 
-// Build default paths for a state + regulatory year
-function buildDefaultPaths(stateCode, regulatoryYear) {
-  const stateConfig = getState(stateCode);
-  if (!stateConfig) return {};
-  const result = {};
-  for (const status of stateConfig.filingStatuses) {
-    result[status.key] = status.defaultPathTemplate.replace('{regulatoryYear}', regulatoryYear);
-  }
-  return result;
-}
 
-ipcMain.handle('read-json-file-paths', async (event, stateCode, regulatoryYear) => {
+ipcMain.handle('read-json-file-paths', async (event, stateCode, regulatoryYear, workflowKey = 'standard') => {
   const all = await loadAllJsonPaths();
-  const key = `${stateCode}-${regulatoryYear}`;
-  if (all[key]) return all[key];
-  // Return defaults if no saved paths
-  return buildDefaultPaths(stateCode, regulatoryYear);
+  const key = buildStorageKey(stateCode, regulatoryYear, workflowKey);
+  if (all[key]) return normalizeSavedPaths(stateCode, regulatoryYear, workflowKey, all[key]);
+  return normalizeSavedPaths(stateCode, regulatoryYear, workflowKey, buildDefaultPaths(stateCode, regulatoryYear, workflowKey));
 });
 
-ipcMain.handle('save-json-file-paths', async (event, stateCode, paths) => {
+ipcMain.handle('save-json-file-paths', async (event, stateCode, paths, workflowKey = 'standard') => {
   const all = await loadAllJsonPaths();
-  // paths contains { stateCode, regulatoryYear, filePaths: { [statusKey]: path } }
-  const key = `${paths.stateCode}-${paths.regulatoryYear}`;
-  all[key] = paths.filePaths;
+  const key = buildStorageKey(paths.stateCode, paths.regulatoryYear, workflowKey);
+  all[key] = normalizeSavedPaths(paths.stateCode, paths.regulatoryYear, workflowKey, paths.filePaths);
   await saveAllJsonPaths(all);
   return { success: true };
 });
-
-// ─── File dialogs ─────────────────────────────────────────────────────────────
-
 
 ipcMain.handle('select-pdf-file', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -117,8 +95,6 @@ ipcMain.handle('select-json-file', async (event, type, currentPath) => {
   return result.canceled ? null : result.filePaths[0];
 });
 
-// ─── Read current JSON values for diff ───────────────────────────────────────
-
 ipcMain.handle('read-current-json-values', async (event, filePath) => {
   try {
     const raw = await fs.readFile(filePath, 'utf-8');
@@ -131,7 +107,7 @@ ipcMain.handle('read-current-json-values', async (event, filePath) => {
     const values = {};
     for (const field of data.Fields) {
       const income = Array.isArray(field.Key) ? field.Key[0] : field.Key;
-      values[parseInt(income)] = field.Value;
+      values[parseInt(income, 10)] = field.Value;
     }
 
     return { success: true, values, year: data.Year, lookUpType: data.LookUpType || 'LowerBoundary' };
@@ -140,10 +116,7 @@ ipcMain.handle('read-current-json-values', async (event, filePath) => {
   }
 });
 
-// ─── Update JSON files ────────────────────────────────────────────────────────
-
 ipcMain.handle('update-json-files', async (event, payload) => {
-  // payload: { taxYear, updates: [{ statusKey, filePath, newValues: { [income]: value } }] }
   const results = [];
 
   for (const update of payload.updates) {
@@ -166,14 +139,12 @@ async function updateJsonFile(filePath, newValues, taxYear) {
     throw new Error(`Invalid JSON structure in ${filePath}`);
   }
 
-  // Update year
   data.Year = taxYear;
 
   let updatedCount = 0;
   for (const field of data.Fields) {
-    const income = parseInt(Array.isArray(field.Key) ? field.Key[0] : field.Key);
+    const income = parseInt(Array.isArray(field.Key) ? field.Key[0] : field.Key, 10);
     if (newValues[income] !== undefined) {
-      // Preserve existing value type (string vs number)
       const existingValue = field.Value;
       const newVal = newValues[income];
       field.Value = typeof existingValue === 'string' ? String(newVal) : Number(newVal);
@@ -186,7 +157,99 @@ async function updateJsonFile(filePath, newValues, taxYear) {
   return updatedCount;
 }
 
-// ─── Export text file ─────────────────────────────────────────────────────────
+ipcMain.handle('read-marriage-credit-table', async (event, filePath) => {
+  try {
+    const raw = await fs.readFile(filePath, 'utf-8');
+    const data = JSON.parse(raw);
+    if (!Array.isArray(data.Fields)) {
+      return { success: false, message: 'Invalid JSON structure: missing Fields array' };
+    }
+
+    const rows = data.Fields.map((field, index) => {
+      if (!Array.isArray(field.Key) || field.Key.length < 2) {
+        throw new Error(`Field ${index + 1} is missing a two-part key.`);
+      }
+
+      return {
+        separateIncome: Number(field.Key[0]),
+        jointIncome: Number(field.Key[1]),
+        value: Number(field.Value)
+      };
+    }).sort((a, b) => a.separateIncome - b.separateIncome || a.jointIncome - b.jointIncome);
+
+    return {
+      success: true,
+      rows,
+      year: data.Year,
+      metadata: {
+        Uid: data.Uid,
+        Entity: data.Entity,
+        Name: data.Name,
+        LookUpType: data.LookUpType,
+        LookUpTypeMultiple: data.LookUpTypeMultiple,
+        KeyTypes: data.KeyTypes,
+        TomKeyTypes: data.TomKeyTypes,
+        ValueType: data.ValueType,
+        TomValueType: data.TomValueType
+      }
+    };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+});
+
+function normalizeMarriageCreditRows(rows) {
+  return rows.map((row, index) => {
+    const separateIncome = Number(row.separateIncome);
+    const jointIncome = Number(row.jointIncome);
+    const value = Number(row.value);
+
+    if (!Number.isFinite(separateIncome) || !Number.isFinite(jointIncome) || !Number.isFinite(value)) {
+      throw new Error(`Marriage credit row ${index + 1} contains invalid numeric data.`);
+    }
+
+    return { separateIncome, jointIncome, value };
+  }).sort((a, b) => a.separateIncome - b.separateIncome || a.jointIncome - b.jointIncome);
+}
+
+function buildMarriageCreditFields(rows, existingFields) {
+  const valueShouldBeString = Array.isArray(existingFields)
+    && existingFields.length > 0
+    && typeof existingFields[0].Value === 'string';
+
+  return rows.map(row => ({
+    Key: [row.separateIncome, row.jointIncome],
+    Value: valueShouldBeString ? String(row.value) : Number(row.value),
+    ComplexTypeFields: [],
+    ComplexValue: {}
+  }));
+}
+
+
+ipcMain.handle('replace-marriage-credit-table', async (event, payload) => {
+  try {
+    const raw = await fs.readFile(payload.filePath, 'utf-8');
+    const data = JSON.parse(raw);
+
+    if (!Array.isArray(data.Fields)) {
+      throw new Error('Invalid JSON structure: missing Fields array');
+    }
+
+    const normalizedRows = normalizeMarriageCreditRows(payload.rows || []);
+
+    data.Year = payload.taxYear;
+    data.Fields = buildMarriageCreditFields(normalizedRows, data.Fields);
+
+    await fs.writeFile(payload.filePath, JSON.stringify(data, null, 2), 'utf-8');
+
+    return {
+      success: true,
+      updatedCount: normalizedRows.length
+    };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+});
 
 ipcMain.handle('export-text-file', async (event, textContent) => {
   const result = await dialog.showSaveDialog(mainWindow, {
@@ -207,8 +270,6 @@ ipcMain.handle('export-text-file', async (event, textContent) => {
   }
 });
 
-// ─── Read image as base64 (for model API) ────────────────────────────────────
-
 ipcMain.handle('read-binary-file-as-base64', async (event, filePath) => {
   try {
     const buffer = await fs.readFile(filePath);
@@ -217,8 +278,3 @@ ipcMain.handle('read-binary-file-as-base64', async (event, filePath) => {
     return { success: false, message: error.message };
   }
 });
-
-
-
-
-

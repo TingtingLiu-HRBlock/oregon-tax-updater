@@ -10,10 +10,12 @@ contextBridge.exposeInMainWorld('api', {
   selectJsonFile: (type, currentPath) => ipcRenderer.invoke('select-json-file', type, currentPath),
 
   // JSON file operations
-  readJsonFilePaths: (stateCode, regulatoryYear) => ipcRenderer.invoke('read-json-file-paths', stateCode, regulatoryYear),
-  saveJsonFilePaths: (stateCode, paths) => ipcRenderer.invoke('save-json-file-paths', stateCode, paths),
+  readJsonFilePaths: (stateCode, regulatoryYear, workflowKey) => ipcRenderer.invoke('read-json-file-paths', stateCode, regulatoryYear, workflowKey),
+  saveJsonFilePaths: (stateCode, paths, workflowKey) => ipcRenderer.invoke('save-json-file-paths', stateCode, paths, workflowKey),
   readCurrentJsonValues: (filePath) => ipcRenderer.invoke('read-current-json-values', filePath),
   updateJsonFiles: (payload) => ipcRenderer.invoke('update-json-files', payload),
+  readMarriageCreditTable: (filePath) => ipcRenderer.invoke('read-marriage-credit-table', filePath),
+  replaceMarriageCreditTable: (payload) => ipcRenderer.invoke('replace-marriage-credit-table', payload),
 
   // Export
   exportTextFile: (content) => ipcRenderer.invoke('export-text-file', content),
