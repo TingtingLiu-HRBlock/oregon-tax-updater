@@ -3,9 +3,6 @@ module.exports = {
   name: 'Minnesota',
   formName: 'Form M1',
   incomeLineLabel: 'Form M1, line 9',
-  pdfTaxTablePagesByYear: {
-    2024: { start: 30, end: 36 }
-  },
   filingStatuses: [
     {
       key: 'Single',

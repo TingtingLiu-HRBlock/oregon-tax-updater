@@ -14,30 +14,30 @@ Manual scenario test
 
 ## Preconditions
 - The app starts successfully.
-- A valid OpenAI API key is saved in Settings.
 - State is set to `Oregon`.
 - The OR JSON file paths are configured.
-- The three Oregon 2024 screenshots from the OR extraction scenario are available.
+- The Oregon 2024 instruction PDF is available locally.
 - Extraction completes successfully and produces diffs for both `Single` and `Joint`.
 
 ## Test Data
-Use the same three Oregon screenshots defined in [SCENARIO_TEST_OR_2024.md](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/SCENARIO_TEST_OR_2024.md).
+Use the same Oregon instruction PDF defined in [SCENARIO_TEST_OR_2024_PDF.md](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/SCENARIO_TEST_OR_2024_PDF.md).
 
 ## Steps
 1. Launch the app.
 2. Select state `Oregon`.
-3. Upload the three OR 2024 screenshots.
-4. Run extraction until the `Review Changes` section appears.
-5. Confirm the `Single` tab is selected by default.
-6. Observe the changed-count badge for `Single`.
-7. Click the `Joint` tab.
-8. Verify the `Joint` tab becomes active.
-9. Verify the `Joint` diff panel is shown.
-10. Verify the changed-count badge for `Joint` matches the displayed panel data.
-11. Verify the `Joint` panel content differs from the `Single` panel content.
-12. Click back to `Single`.
-13. Verify the `Single` tab becomes active again.
-14. Verify the `Single` diff panel is shown again.
+3. Click `Select PDF` and choose the Oregon 2024 instruction PDF.
+4. Enter the known tax-table page range for the test PDF.
+5. Run extraction until the `Review Changes` section appears.
+6. Confirm the `Single` tab is selected by default.
+7. Observe the changed-count badge for `Single`.
+8. Click the `Joint` tab.
+9. Verify the `Joint` tab becomes active.
+10. Verify the `Joint` diff panel is shown.
+11. Verify the changed-count badge for `Joint` matches the displayed panel data.
+12. Verify the `Joint` panel content differs from the `Single` panel content.
+13. Click back to `Single`.
+14. Verify the `Single` tab becomes active again.
+15. Verify the `Single` diff panel is shown again.
 
 ## Expected Results
 - `Single` is the default active tab when the diff section first renders.

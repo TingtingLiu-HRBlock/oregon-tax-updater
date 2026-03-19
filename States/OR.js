@@ -3,9 +3,6 @@ module.exports = {
   name: 'Oregon',
   formName: 'Form OR-40',
   incomeLineLabel: 'Form OR-40, line 19',
-  pdfTaxTablePagesByYear: {
-    2024: { start: 26, end: 28 }
-  },
   filingStatuses: [
     {
       key: 'S',

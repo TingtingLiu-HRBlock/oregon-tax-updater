@@ -51,32 +51,6 @@ ipcMain.handle('get-state-config', (event, code) => {
   return getState(code);
 });
 
-// ─── Settings (API key etc.) ─────────────────────────────────────────────────
-
-async function loadSettings() {
-  try {
-    const raw = await fs.readFile(getConfigPath('settings.json'), 'utf-8');
-    const parsed = JSON.parse(raw);
-    return {
-      openaiApiKey: parsed.openaiApiKey || '',
-      anthropicApiKey: parsed.anthropicApiKey || ''
-    };
-  } catch {
-    return { openaiApiKey: '', anthropicApiKey: '' };
-  }
-}
-
-async function saveSettingsToFile(settings) {
-  await fs.writeFile(getConfigPath('settings.json'), JSON.stringify(settings, null, 2), 'utf-8');
-}
-
-ipcMain.handle('get-settings', async () => loadSettings());
-
-ipcMain.handle('save-settings', async (event, settings) => {
-  await saveSettingsToFile(settings);
-  return { success: true };
-});
-
 // ─── JSON file path persistence ──────────────────────────────────────────────
 
 async function loadAllJsonPaths() {
@@ -122,13 +96,6 @@ ipcMain.handle('save-json-file-paths', async (event, stateCode, paths) => {
 
 // ─── File dialogs ─────────────────────────────────────────────────────────────
 
-ipcMain.handle('select-images', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openFile', 'multiSelections'],
-    filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif', 'bmp'] }]
-  });
-  return result.canceled ? null : result.filePaths;
-});
 
 ipcMain.handle('select-pdf-file', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -251,17 +218,6 @@ ipcMain.handle('read-binary-file-as-base64', async (event, filePath) => {
   }
 });
 
-ipcMain.handle('read-image-as-base64', async (event, filePath) => {
-  try {
-    const buffer = await fs.readFile(filePath);
-    const ext = path.extname(filePath).toLowerCase().slice(1);
-    const mimeMap = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', bmp: 'image/bmp' };
-    const mediaType = mimeMap[ext] || 'image/jpeg';
-    return { success: true, base64: buffer.toString('base64'), mediaType };
-  } catch (error) {
-    return { success: false, message: error.message };
-  }
-});
 
 
 

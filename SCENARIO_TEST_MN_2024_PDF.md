@@ -1,7 +1,7 @@
 # MN 2024 PDF Extraction Scenario Test
 
 ## Purpose
-Verify that the app can extract the full Minnesota 2024 M1 tax table from the instruction PDF using the deterministic non-API PDF parser, and produce correct values for all four filing statuses.
+Verify that the app can extract the full Minnesota 2024 M1 tax table from the instruction PDF using the deterministic PDF parser, and produce correct values for all four filing statuses.
 
 ## Test Type
 Manual scenario test
@@ -27,7 +27,7 @@ Expected tax table page range:
 - State is set to `Minnesota`.
 - The MN JSON file paths are configured.
 - The Minnesota instruction PDF is available locally.
-- The selected PDF page range is `30-36`, either from config, auto-detection, or manual override.
+- The tester knows the correct PDF page range is `30-36` and will enter it manually.
 
 ## Steps
 1. Launch the app.
@@ -35,15 +35,14 @@ Expected tax table page range:
 3. Select tax year `2024`.
 4. Click `Select PDF`.
 5. Choose the Minnesota instruction PDF.
-6. Confirm the page range is `30-36`.
-7. Click `Extract Data from Images`.
+6. Enter page range `30-36`.
+7. Click `Extract Data from PDF`.
 8. Wait for extraction and diff review to complete.
 9. Open the review tabs for `Single`, `MFJ & QW`, `MFS`, and `HOH`.
 10. Verify the extraction summary and checkpoint values below.
 
 ## Expected Results
 - Extraction completes without an error toast.
-- The app does not require an OpenAI API key for this Minnesota PDF path.
 - No conflicting-merge error occurs.
 - The review section appears for all four Minnesota filing statuses.
 - The extracted values match the Minnesota 2024 instruction PDF.
@@ -71,20 +70,18 @@ Verify these extracted values are represented correctly in the review/update out
 ## Pass Criteria
 The scenario passes if all of the following are true:
 - Extraction finishes successfully from the PDF.
-- No API key is required for the Minnesota PDF path.
 - The four filing-status tabs render correctly.
 - The checkpoint values above match exactly.
 - The `MFS` and `HOH` values at `23,200` are correct and not swapped or flattened.
 
 ## Failure Examples
 The scenario fails if any of the following occur:
-- Extraction requires an OpenAI key for Minnesota PDF parsing.
 - Extraction stops with an error toast.
 - `MFS` and `HOH` values are misread around `23,200`.
 - One filing status column is copied into another.
 - The review panel is missing one or more Minnesota filing statuses.
 
 ## Notes
-- This scenario specifically covers the deterministic non-API Minnesota PDF parser.
+- This scenario specifically covers the deterministic Minnesota PDF parser.
 - It should be rerun whenever the Minnesota PDF parsing logic, page-range handling, or filing-status mapping changes.
 - The `23,200` row is a key regression checkpoint because `MFS` should be `1245` while `HOH` should remain `1244`.

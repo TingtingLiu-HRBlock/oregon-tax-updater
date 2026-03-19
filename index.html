@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: file:; connect-src https://api.openai.com;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: file:;">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>State Tax Table Updater</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -10,29 +10,6 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-
-  <!-- Settings overlay -->
-  <div id="settingsOverlay" class="overlay"></div>
-  <div id="settingsPanel" class="settings-panel">
-    <div class="settings-header">
-      <h3>Settings</h3>
-      <button id="closeSettingsBtn" class="btn-icon">✕</button>
-    </div>
-    <div class="settings-body">
-      <div class="form-group">
-        <label for="apiKeyInput">OpenAI API Key</label>
-        <p class="form-hint">Used to extract tax data from screenshots via the OpenAI vision API. Your key is stored locally on this machine only.</p>
-        <div class="api-key-row">
-          <input type="password" id="apiKeyInput" placeholder="sk-proj-..." autocomplete="off" spellcheck="false" />
-          <button id="toggleApiKeyBtn" class="btn btn-sm btn-outline">Show</button>
-        </div>
-      </div>
-    </div>
-    <div class="settings-footer">
-      <button id="saveSettingsBtn" class="btn btn-primary">Save Settings</button>
-    </div>
-  </div>
-
   <!-- Main layout -->
   <div class="app-layout">
 
@@ -74,13 +51,6 @@
           <div id="filePickersContainer" class="file-pickers"></div>
         </div>
       </nav>
-
-      <div class="sidebar-footer">
-        <button id="settingsBtn" class="btn-settings">
-          <span id="apiKeyIndicator" class="api-key-dot missing"></span>
-          Settings
-        </button>
-      </div>
     </aside>
 
     <!-- Main content -->
@@ -92,18 +62,15 @@
           <div class="step-badge">01</div>
           <div>
             <h2 class="section-title">Upload Source</h2>
-            <p class="section-subtitle">Select screenshots or an instruction PDF for the selected state and year.</p>
+            <p class="section-subtitle">Select an instruction PDF for the selected state and year.</p>
           </div>
         </div>
 
         <div class="upload-area" id="uploadArea">
-          <button id="selectImagesBtn" class="btn btn-primary">
-            <span class="btn-icon-left">+</span> Select Images
-          </button>
-          <button id="selectPdfBtn" class="btn btn-outline">
+          <button id="selectPdfBtn" class="btn btn-primary">
             <span class="btn-icon-left">+</span> Select PDF
           </button>
-          <p class="upload-hint">JPG, PNG, BMP, GIF, and PDF supported · PDF uses state-configured tax table pages when available</p>
+          <p class="upload-hint">PDF only - enter the start and end tax-table pages manually</p>
         </div>
 
         <div id="pdfSelectionSection" style="display:none">
@@ -111,18 +78,14 @@
           <div class="api-key-row" style="margin-top:12px; gap:12px; align-items:end; flex-wrap:wrap;">
             <div class="form-group" style="margin:0; min-width:140px;">
               <label for="pdfPageStartInput">PDF Start Page</label>
-              <input type="number" id="pdfPageStartInput" class="text-input" min="1" step="1" />
+              <input type="number" id="pdfPageStartInput" class="text-input" min="1" step="1" required />
             </div>
             <div class="form-group" style="margin:0; min-width:140px;">
               <label for="pdfPageEndInput">PDF End Page</label>
-              <input type="number" id="pdfPageEndInput" class="text-input" min="1" step="1" />
+              <input type="number" id="pdfPageEndInput" class="text-input" min="1" step="1" required />
             </div>
-            <p class="upload-hint" style="margin:0; max-width:420px;">Override the built-in page range when a new instruction booklet uses different tax table pages.</p>
+            <p class="upload-hint" style="margin:0; max-width:420px;">Enter the exact tax-table pages from the selected PDF before running extraction.</p>
           </div>
-        </div>
-
-        <div id="imagePreviewSection" style="display:none">
-          <div id="imagePreview" class="image-grid"></div>
         </div>
       </section>
 
@@ -132,7 +95,7 @@
           <div class="step-badge">02</div>
           <div>
             <h2 class="section-title">Extract Data</h2>
-            <p class="section-subtitle">OpenAI Vision reads the tax table and extracts all income brackets.</p>
+            <p class="section-subtitle">The built-in parser reads the selected PDF pages and extracts all income brackets.</p>
           </div>
         </div>
 
