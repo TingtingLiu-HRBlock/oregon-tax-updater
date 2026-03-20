@@ -4,10 +4,25 @@ function getMarriageCreditCanonicalPath(regulatoryYear) {
   return String.raw`C:\TaxEngine\OCE-Regulatory-${regulatoryYear}\Source\MN\Utils\Tables\MNMarriageCredit.table.json`;
 }
 
+function getHomeownerRefundRowCanonicalPath(regulatoryYear) {
+  return String.raw`C:\TaxEngine\OCE-Regulatory-${regulatoryYear}\Source\MN\Utils\Tables\M1PRHomeownerRefundRowTable.table.json`;
+}
+
+function getHomeownerRefundCanonicalPath(regulatoryYear) {
+  return String.raw`C:\TaxEngine\OCE-Regulatory-${regulatoryYear}\Source\MN\Utils\Tables\M1PRHomeownerRefundTable.table.json`;
+}
+
 function buildDefaultPaths(stateCode, regulatoryYear, workflowKey = 'standard') {
   if (stateCode === 'MN' && workflowKey === 'm1ma') {
     return {
       M1MA: getMarriageCreditCanonicalPath(regulatoryYear)
+    };
+  }
+
+  if (stateCode === 'MN' && workflowKey === 'm1pr') {
+    return {
+      M1PR_ROW: getHomeownerRefundRowCanonicalPath(regulatoryYear),
+      M1PR_REFUND: getHomeownerRefundCanonicalPath(regulatoryYear)
     };
   }
 
@@ -61,6 +76,8 @@ function normalizeSavedPaths(stateCode, regulatoryYear, workflowKey, filePaths) 
 
 module.exports = {
   getMarriageCreditCanonicalPath,
+  getHomeownerRefundRowCanonicalPath,
+  getHomeownerRefundCanonicalPath,
   buildDefaultPaths,
   buildStorageKey,
   normalizeSavedPaths

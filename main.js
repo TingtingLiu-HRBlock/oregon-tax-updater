@@ -225,6 +225,44 @@ function buildMarriageCreditFields(rows, existingFields) {
   }));
 }
 
+function normalizeGenericTableRows(rows) {
+  return rows.map((row, index) => {
+    const key = Array.isArray(row.key) ? row.key : [row.key];
+    const normalizedKey = key.map((part, keyIndex) => {
+      const numericPart = Number(part);
+      if (!Number.isFinite(numericPart)) {
+        throw new Error(`Generic table row ${index + 1} key part ${keyIndex + 1} is not numeric.`);
+      }
+      return numericPart;
+    });
+    const value = Number(row.value);
+    if (!Number.isFinite(value)) {
+      throw new Error(`Generic table row ${index + 1} contains a non-numeric value.`);
+    }
+    return { key: normalizedKey, value };
+  }).sort((a, b) => {
+    const maxLength = Math.max(a.key.length, b.key.length);
+    for (let index = 0; index < maxLength; index++) {
+      const left = a.key[index] ?? Number.NEGATIVE_INFINITY;
+      const right = b.key[index] ?? Number.NEGATIVE_INFINITY;
+      if (left !== right) return left - right;
+    }
+    return a.value - b.value;
+  });
+}
+
+function buildGenericTableFields(rows, existingFields) {
+  const valueShouldBeString = Array.isArray(existingFields)
+    && existingFields.length > 0
+    && typeof existingFields[0].Value === 'string';
+
+  return rows.map(row => ({
+    Key: row.key,
+    Value: valueShouldBeString ? String(row.value) : Number(row.value),
+    ComplexTypeFields: [],
+    ComplexValue: {}
+  }));
+}
 
 ipcMain.handle('replace-marriage-credit-table', async (event, payload) => {
   try {
@@ -239,6 +277,87 @@ ipcMain.handle('replace-marriage-credit-table', async (event, payload) => {
 
     data.Year = payload.taxYear;
     data.Fields = buildMarriageCreditFields(normalizedRows, data.Fields);
+
+    await fs.writeFile(payload.filePath, JSON.stringify(data, null, 2), 'utf-8');
+
+    return {
+      success: true,
+      updatedCount: normalizedRows.length
+    };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+});
+
+ipcMain.handle('read-generic-table', async (event, filePath) => {
+  try {
+    const raw = await fs.readFile(filePath, 'utf-8');
+    const data = JSON.parse(raw);
+    if (!Array.isArray(data.Fields)) {
+      return { success: false, message: 'Invalid JSON structure: missing Fields array' };
+    }
+
+    const rows = data.Fields.map((field, index) => {
+      const key = Array.isArray(field.Key) ? field.Key : [field.Key];
+      if (key.length === 0) {
+        throw new Error(`Field ${index + 1} is missing a key.`);
+      }
+      const normalizedKey = key.map((part, keyIndex) => {
+        const numericPart = Number(part);
+        if (!Number.isFinite(numericPart)) {
+          throw new Error(`Field ${index + 1} key part ${keyIndex + 1} is not numeric.`);
+        }
+        return numericPart;
+      });
+      const value = Number(field.Value);
+      if (!Number.isFinite(value)) {
+        throw new Error(`Field ${index + 1} has a non-numeric value.`);
+      }
+      return { key: normalizedKey, value };
+    }).sort((a, b) => {
+      const maxLength = Math.max(a.key.length, b.key.length);
+      for (let index = 0; index < maxLength; index++) {
+        const left = a.key[index] ?? Number.NEGATIVE_INFINITY;
+        const right = b.key[index] ?? Number.NEGATIVE_INFINITY;
+        if (left !== right) return left - right;
+      }
+      return a.value - b.value;
+    });
+
+    return {
+      success: true,
+      rows,
+      year: data.Year,
+      metadata: {
+        Uid: data.Uid,
+        Entity: data.Entity,
+        Name: data.Name,
+        LookUpType: data.LookUpType,
+        LookUpTypeMultiple: data.LookUpTypeMultiple,
+        KeyTypes: data.KeyTypes,
+        TomKeyTypes: data.TomKeyTypes,
+        ValueType: data.ValueType,
+        TomValueType: data.TomValueType
+      }
+    };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+});
+
+ipcMain.handle('replace-generic-table', async (event, payload) => {
+  try {
+    const raw = await fs.readFile(payload.filePath, 'utf-8');
+    const data = JSON.parse(raw);
+
+    if (!Array.isArray(data.Fields)) {
+      throw new Error('Invalid JSON structure: missing Fields array');
+    }
+
+    const normalizedRows = normalizeGenericTableRows(payload.rows || []);
+
+    data.Year = payload.taxYear;
+    data.Fields = buildGenericTableFields(normalizedRows, data.Fields);
 
     await fs.writeFile(payload.filePath, JSON.stringify(data, null, 2), 'utf-8');
 

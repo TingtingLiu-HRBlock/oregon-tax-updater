@@ -1,11 +1,16 @@
 
 const STANDARD_WORKFLOW_KEY = 'standard';
 const MARRIAGE_CREDIT_WORKFLOW_KEY = 'm1ma';
+const HOMEOWNER_REFUND_WORKFLOW_KEY = 'm1pr';
 const MARRIAGE_CREDIT_FILE_TARGET = {
   key: 'M1MA',
   label: 'Marriage Credit',
   fileLabel: 'M1MA'
 };
+const HOMEOWNER_REFUND_FILE_TARGETS = [
+  { key: 'M1PR_ROW', label: 'Homeowner Refund Row Table', fileLabel: 'M1PR Row' },
+  { key: 'M1PR_REFUND', label: 'Homeowner Refund Table', fileLabel: 'M1PR Refund' }
+];
 
 let appState = {
   selectedStateCode: null,
@@ -18,6 +23,14 @@ let appState = {
   extractedData: null,
   diffResults: null,
   marriageCreditReview: null,
+  homeownerRefundReview: null,
+  homeownerRefundUi: {
+    activeTab: 'rowTable',
+    statusFilters: {
+      rowTable: 'all',
+      refundTable: 'all'
+    }
+  },
 };
 
 async function init() {
@@ -47,13 +60,22 @@ function resetExtractedState() {
   appState.extractedData = null;
   appState.diffResults = null;
   appState.marriageCreditReview = null;
+  appState.homeownerRefundReview = null;
+  appState.homeownerRefundUi = {
+    activeTab: 'rowTable',
+    statusFilters: {
+      rowTable: 'all',
+      refundTable: 'all'
+    }
+  };
 }
 
 function getWorkflowOptions() {
   if (appState.selectedStateConfig?.code === 'MN') {
     return [
       { key: STANDARD_WORKFLOW_KEY, label: 'Standard Tax Tables', hint: 'Minnesota M1 filing-status tables with diff review.' },
-      { key: MARRIAGE_CREDIT_WORKFLOW_KEY, label: 'M1MA Marriage Credit', hint: 'Extract the two-key marriage-credit table, preview the full grid, then replace one JSON file.' }
+      { key: MARRIAGE_CREDIT_WORKFLOW_KEY, label: 'M1MA Marriage Credit', hint: 'Extract the two-key marriage-credit table, preview the full grid, then replace one JSON file.' },
+      { key: HOMEOWNER_REFUND_WORKFLOW_KEY, label: 'M1PR Homeowner Refund', hint: 'Extract the row-table and refund-table grids, review both, then replace two JSON files.' }
     ];
   }
   return [{ key: STANDARD_WORKFLOW_KEY, label: 'Standard Tax Tables', hint: 'Built-in PDF extraction for the configured tax tables.' }];
@@ -63,12 +85,20 @@ function isMarriageCreditWorkflow() {
   return appState.selectedStateConfig?.code === 'MN' && appState.selectedWorkflowKey === MARRIAGE_CREDIT_WORKFLOW_KEY;
 }
 
+function isHomeownerRefundWorkflow() {
+  return appState.selectedStateConfig?.code === 'MN' && appState.selectedWorkflowKey === HOMEOWNER_REFUND_WORKFLOW_KEY;
+}
+
 function getWorkflowStorageKey() {
-  return isMarriageCreditWorkflow() ? MARRIAGE_CREDIT_WORKFLOW_KEY : STANDARD_WORKFLOW_KEY;
+  if (isMarriageCreditWorkflow()) return MARRIAGE_CREDIT_WORKFLOW_KEY;
+  if (isHomeownerRefundWorkflow()) return HOMEOWNER_REFUND_WORKFLOW_KEY;
+  return STANDARD_WORKFLOW_KEY;
 }
 
 function getActiveFileTargets() {
-  return isMarriageCreditWorkflow() ? [MARRIAGE_CREDIT_FILE_TARGET] : (appState.selectedStateConfig?.filingStatuses || []);
+  if (isMarriageCreditWorkflow()) return [MARRIAGE_CREDIT_FILE_TARGET];
+  if (isHomeownerRefundWorkflow()) return HOMEOWNER_REFUND_FILE_TARGETS;
+  return appState.selectedStateConfig?.filingStatuses || [];
 }
 
 function renderWorkflowPicker() {
@@ -90,23 +120,45 @@ function renderWorkflowPicker() {
 
 function renderWorkflowText() {
   document.getElementById('sourceSubtitle').textContent = isMarriageCreditWorkflow()
-    ? 'Select the Minnesota Schedule M1MA instruction PDF and the page range that contains line 8.'
-    : 'Select an instruction PDF for the selected state and year.';
+    ? 'Select the Minnesota Schedule M1MA instruction PDF and the page range that contains the marriage-credit table.'
+    : isHomeownerRefundWorkflow()
+      ? 'Select the Minnesota M1PR instruction PDF and the page range that contains the Homestead Credit Refund Table.'
+      : 'Select an instruction PDF for the selected state and year.';
   document.getElementById('uploadHint').textContent = isMarriageCreditWorkflow()
-    ? 'PDF only - use the page range that contains the line 8 marriage-credit table'
-    : 'PDF only - enter the start and end tax-table pages manually';
+    ? 'PDF only - use the page range that contains the marriage-credit table'
+    : isHomeownerRefundWorkflow()
+      ? 'PDF only - use the page range that contains the Homestead Credit Refund Table'
+      : 'PDF only - enter the start and end tax-table pages manually';
   document.getElementById('pageRangeHint').textContent = isMarriageCreditWorkflow()
-    ? 'Enter the exact PDF pages that contain the Schedule M1MA line 8 table before extracting.'
-    : 'Enter the exact tax-table pages from the selected PDF before running extraction.';
-  document.getElementById('extractSectionTitle').textContent = isMarriageCreditWorkflow() ? 'Extract Marriage Credit Table' : 'Extract Data';
+    ? 'Enter the exact PDF pages that contain the Schedule M1MA marriage-credit table before extracting.'
+    : isHomeownerRefundWorkflow()
+      ? 'Enter the exact PDF pages that contain the Homestead Credit Refund Table before extracting.'
+      : 'Enter the exact tax-table pages from the selected PDF before running extraction.';
+  document.getElementById('extractSectionTitle').textContent = isMarriageCreditWorkflow()
+    ? 'Extract Marriage Credit Table'
+    : isHomeownerRefundWorkflow()
+      ? 'Extract Homeowner Refund Tables'
+      : 'Extract Data';
   document.getElementById('extractSectionSubtitle').textContent = isMarriageCreditWorkflow()
-    ? 'The built-in parser reads the M1MA line 8 table and prepares a full two-key preview for review.'
-    : 'The built-in parser reads the selected PDF pages and extracts all income brackets.';
-  document.getElementById('updateSectionTitle').textContent = isMarriageCreditWorkflow() ? 'Replace Marriage Credit JSON' : 'Update JSON Files';
+    ? 'The built-in parser reads the M1MA table and prepares a full two-key preview for review.'
+    : isHomeownerRefundWorkflow()
+      ? 'The built-in parser reads the M1PR Homestead Credit Refund Table and prepares both review tables.'
+      : 'The built-in parser reads the selected PDF pages and extracts all income brackets.';
+  document.getElementById('updateSectionTitle').textContent = isMarriageCreditWorkflow()
+    ? 'Replace Marriage Credit JSON'
+    : isHomeownerRefundWorkflow()
+      ? 'Replace Homeowner Refund JSON'
+      : 'Update JSON Files';
   document.getElementById('updateSectionSubtitle').textContent = isMarriageCreditWorkflow()
     ? 'Writes a full replacement MNMarriageCredit table after you review the extracted grid.'
-    : 'Writes new values to all filing status files. Review the diff above before proceeding.';
-  document.getElementById('updateJsonBtn').textContent = isMarriageCreditWorkflow() ? 'Replace Marriage Credit JSON' : 'Update JSON Files';
+    : isHomeownerRefundWorkflow()
+      ? 'Writes full replacement M1PR row and refund tables after you review both extracted grids.'
+      : 'Writes new values to all filing status files. Review the diff above before proceeding.';
+  document.getElementById('updateJsonBtn').textContent = isMarriageCreditWorkflow()
+    ? 'Replace Marriage Credit JSON'
+    : isHomeownerRefundWorkflow()
+      ? 'Replace Homeowner Refund JSON'
+      : 'Update JSON Files';
 }
 
 async function onStateChange(stateCode) {
@@ -183,6 +235,18 @@ function syncPdfPageInputs() {
   document.getElementById('pdfPageEndInput').value = appState.pdfPageRangeOverride.end;
 }
 
+function getWorkflowPageRangeLabel() {
+  if (isMarriageCreditWorkflow()) return 'Schedule M1MA pages';
+  if (isHomeownerRefundWorkflow()) return 'M1PR refund-table pages';
+  return 'Tax table pages';
+}
+
+function getPendingWorkflowPageRangeLabel() {
+  if (isMarriageCreditWorkflow()) return 'Enter the Schedule M1MA table page range';
+  if (isHomeownerRefundWorkflow()) return 'Enter the M1PR refund-table page range';
+  return `Enter required PDF start/end pages for tax year ${appState.taxYear}`;
+}
+
 function renderSelectedSource() {
   const pdfSection = document.getElementById('pdfSelectionSection');
   const pdfSummary = document.getElementById('pdfSelectionSummary');
@@ -192,8 +256,8 @@ function renderSelectedSource() {
     syncPdfPageInputs();
     const fileName = appState.selectedPdfPath.split(/[\/\\]/).pop();
     pdfSummary.textContent = effective
-      ? `PDF selected: ${fileName} | ${isMarriageCreditWorkflow() ? 'Schedule M1MA pages' : 'Tax table pages'} ${effective.start}-${effective.end}`
-      : `PDF selected: ${fileName} | ${isMarriageCreditWorkflow() ? 'Enter the Schedule M1MA table page range' : `Enter required PDF start/end pages for tax year ${appState.taxYear}`}`;
+      ? `PDF selected: ${fileName} | ${getWorkflowPageRangeLabel()} ${effective.start}-${effective.end}`
+      : `PDF selected: ${fileName} | ${getPendingWorkflowPageRangeLabel()}`;
     return;
   }
   pdfSection.style.display = 'none';
@@ -444,6 +508,222 @@ function parseMarriageCreditFromFullText(textItems) {
   return flattenMarriageCreditRows(jointLowerBounds, matrixRows);
 }
 
+function isSequentialStep(values, step) {
+  if (values.length < 2) return false;
+  for (let index = 1; index < values.length; index++) if (values[index] - values[index - 1] !== step) return false;
+  return true;
+}
+
+function looksLikeHomeownerRefundAmountHeader(values) {
+  return values.length >= 8 && values.length <= 12 && values[0] >= 0 && isSequentialStep(values, 25);
+}
+
+function parseHomeownerRefundPageRows(textItems) {
+  const rows = groupPdfTextItemsByRow(textItems.map(item => ({ str: 'str' in item ? item.str : '', x: item.transform?.[4], y: item.transform?.[5] })));
+  const parsedRows = [];
+
+  for (let index = 0; index < rows.length; index++) {
+    const amountStarts = getRowNumericValues(rows[index]);
+    if (!looksLikeHomeownerRefundAmountHeader(amountStarts)) continue;
+
+    let upperHeaderIndex = -1;
+    // The final M1PR page can insert worksheet labels between the lower and upper amount headers.
+    for (let candidate = index + 1; candidate <= Math.min(rows.length - 1, index + 8); candidate++) {
+      const amountEnds = getRowNumericValues(rows[candidate]);
+      const rowText = getRowText(rows[candidate]).toLowerCase();
+      const matchingNumericValues = amountEnds.length === amountStarts.length || amountEnds.length === amountStarts.length - 1;
+      if (!matchingNumericValues) continue;
+      if (!amountEnds.every((value, amountIndex) => value === amountStarts[amountIndex] + 25)) continue;
+      if (amountEnds.length !== amountStarts.length && !rowText.includes('&')) continue;
+      upperHeaderIndex = candidate;
+      break;
+    }
+
+    if (upperHeaderIndex === -1) continue;
+
+    let lastDataIndex = upperHeaderIndex;
+    for (let rowIndex = upperHeaderIndex + 1; rowIndex < rows.length; rowIndex++) {
+      const rowText = getRowText(rows[rowIndex]);
+      const rowTextLower = rowText.toLowerCase();
+      const numericValues = getRowNumericValues(rows[rowIndex]);
+
+      if (looksLikeHomeownerRefundAmountHeader(numericValues)) break;
+      if (rowTextLower.includes('refund worksheet')) break;
+      if (rowTextLower.includes('homestead credit refund table') && numericValues.length === 0) {
+        if (parsedRows.length > 0) break;
+        continue;
+      }
+      if (numericValues.length < amountStarts.length + 1) continue;
+
+      const rowLower = numericValues[0];
+      const truncatedByWorksheetMarker = rowText.includes('*');
+      let hasNumericUpper = numericValues.length >= amountStarts.length + 2 || (truncatedByWorksheetMarker && numericValues.length >= amountStarts.length + 1);
+      let rowUpper = hasNumericUpper ? numericValues[1] : null;
+      const values = numericValues.slice(hasNumericUpper ? 2 : 1, (hasNumericUpper ? 2 : 1) + amountStarts.length);
+      const alignedAmountStarts = amountStarts;
+      const isFinalHomeownerAmountSegment = amountStarts[amountStarts.length - 1] === 3500;
+      const hasSuspiciousTrailingValue = isFinalHomeownerAmountSegment && values.length === amountStarts.length && values.length > 1 && values[values.length - 1] < values[values.length - 2];
+      const hasImplausiblyLargeTrailingValue = isFinalHomeownerAmountSegment && values.length === amountStarts.length && values.length > 1 && values[values.length - 1] > values[values.length - 2] + 500;
+      const misreadUpperLooksLikeFirstRefund = hasSuspiciousTrailingValue && hasNumericUpper && Number.isFinite(rowUpper) && values.length > 0 && Math.abs(values[0] - rowUpper - 22) <= 3;
+      let alignedValues = truncatedByWorksheetMarker && values.length === amountStarts.length - 1
+        ? [...values, 99999]
+        : values;
+      let starValueIndices = truncatedByWorksheetMarker && values.length === amountStarts.length - 1
+        ? [amountStarts.length - 1]
+        : [];
+
+      if (misreadUpperLooksLikeFirstRefund) {
+        alignedValues = [rowUpper, ...values.slice(0, -1), 99999];
+        starValueIndices = [amountStarts.length - 1];
+        hasNumericUpper = false;
+        rowUpper = null;
+      } else if (hasSuspiciousTrailingValue || hasImplausiblyLargeTrailingValue) {
+        alignedValues = [...values.slice(0, -1), 99999];
+        starValueIndices = [amountStarts.length - 1];
+      }
+
+      if (alignedValues.length !== alignedAmountStarts.length) continue;
+      if (hasNumericUpper && !(rowLower < rowUpper)) continue;
+
+      parsedRows.push({ rowLower, rowUpper, amountStarts: alignedAmountStarts, values: alignedValues, starValueIndices });
+      lastDataIndex = rowIndex;
+    }
+
+    index = lastDataIndex;
+  }
+
+  if (parsedRows.length === 0) {
+    throw new Error('Deterministic parser found no homeowner-refund rows in the selected page.');
+  }
+
+  return parsedRows;
+}
+
+function sortGenericTableRows(rows) {
+  return [...rows].sort((a, b) => {
+    const maxLength = Math.max(a.key.length, b.key.length);
+    for (let index = 0; index < maxLength; index++) {
+      const left = a.key[index] ?? Number.NEGATIVE_INFINITY;
+      const right = b.key[index] ?? Number.NEGATIVE_INFINITY;
+      if (left !== right) return left - right;
+    }
+    return Number(a.value) - Number(b.value);
+  });
+}
+
+function buildGenericTableKey(row) {
+  return row.key.join('|');
+}
+
+function buildGenericTableReview(extractedRows, currentTableResult = null, options = {}) {
+  const normalizedExtractedRows = sortGenericTableRows(extractedRows.map(row => ({
+    ...row,
+    key: row.key.map(part => Number(part)),
+    value: Number(row.value),
+    source: row.source || 'pdf'
+  })));
+  const currentRows = currentTableResult?.success ? sortGenericTableRows(currentTableResult.rows.map(row => ({ key: row.key.map(part => Number(part)), value: Number(row.value) }))) : [];
+  const currentByKey = new Map(currentRows.map(row => [buildGenericTableKey(row), row]));
+  let changedCount = 0;
+  let unchangedCount = 0;
+  let newCount = 0;
+
+  const reviewRows = normalizedExtractedRows.map(row => {
+    const current = currentByKey.get(buildGenericTableKey(row));
+    let reviewStatus = 'new';
+    if (current) {
+      if (Number(current.value) === Number(row.value)) { reviewStatus = 'match'; unchangedCount++; }
+      else { reviewStatus = 'changed'; changedCount++; }
+    } else newCount++;
+    return { ...row, currentValue: current ? Number(current.value) : null, reviewStatus };
+  });
+
+  const combinedKeys = new Set(reviewRows.map(buildGenericTableKey));
+  const missingCount = currentRows.filter(row => !combinedKeys.has(buildGenericTableKey(row))).length;
+
+  return {
+    rows: reviewRows,
+    extractedCount: options.extractedCountOverride ?? normalizedExtractedRows.length,
+    currentCount: currentRows.length,
+    changedCount,
+    unchangedCount,
+    newCount,
+    missingCount,
+    currentYear: currentTableResult?.year || null
+  };
+}
+
+function overlayGenericTableRows(currentRows, extractedRows) {
+  const rowMap = new Map((currentRows || []).map(row => [buildGenericTableKey(row), { ...row, key: [...row.key], value: Number(row.value) }]));
+  for (const row of extractedRows) rowMap.set(buildGenericTableKey(row), { ...row, key: [...row.key], value: Number(row.value) });
+  return sortGenericTableRows([...rowMap.values()]);
+}
+
+function normalizeHomeownerRefundJsonRows(rows) {
+  return rows.map(row => ({
+    key: [...row.key],
+    value: row.isStarValue ? 99999 : Number(row.value)
+  }));
+}
+
+function buildHomeownerRefundTables(parsedRows) {
+  const rowNumberByLower = new Map();
+  const rowLowers = [];
+
+  for (const parsedRow of parsedRows) {
+    if (!rowNumberByLower.has(parsedRow.rowLower)) {
+      rowNumberByLower.set(parsedRow.rowLower, rowNumberByLower.size + 1);
+      rowLowers.push(parsedRow.rowLower);
+    }
+  }
+
+  const rowTableRows = rowLowers.map((rowLower, index) => ({
+    key: [index === 0 ? -1000000 : rowLower],
+    value: index + 1
+  }));
+
+  const refundRows = [];
+  for (let parsedRowIndex = 0; parsedRowIndex < parsedRows.length; parsedRowIndex++) {
+    const parsedRow = parsedRows[parsedRowIndex];
+    const nextParsedRow = parsedRows[parsedRowIndex + 1] || null;
+    const rowNumber = rowNumberByLower.get(parsedRow.rowLower);
+    parsedRow.amountStarts.forEach((amountStart, amountIndex) => {
+      const isLastAmountColumn = amountIndex === parsedRow.amountStarts.length - 1;
+      const leaksNextRowBoundary = isLastAmountColumn && amountStart === 3500 && nextParsedRow && Number(parsedRow.values[amountIndex]) === Number(nextParsedRow.rowLower);
+      const isStarValue = parsedRow.starValueIndices?.includes(amountIndex)
+        || Number(parsedRow.values[amountIndex]) === 99999
+        || leaksNextRowBoundary;
+      refundRows.push({
+        key: [rowNumber, amountStart],
+        value: isStarValue ? 99999 : parsedRow.values[amountIndex],
+        isStarValue
+      });
+    });
+  }
+
+  return {
+    rowTableRows: sortGenericTableRows(rowTableRows),
+    refundRows: sortGenericTableRows(refundRows)
+  };
+}
+
+async function extractHomeownerRefundFromPdf(filePath, pageRange) {
+  const fileResult = await window.api.readBinaryFileAsBase64(filePath);
+  if (!fileResult.success) throw new Error(fileResult.message || 'Failed to read selected PDF.');
+  const pdfjsLib = await getPdfJsLib();
+  const pdf = await pdfjsLib.getDocument({ data: base64ToUint8Array(fileResult.base64) }).promise;
+  let parsedRows = [];
+  for (let pageNo = pageRange.start; pageNo <= pageRange.end; pageNo++) {
+    if (pageNo < 1 || pageNo > pdf.numPages) throw new Error(`Configured PDF page ${pageNo} is outside the document range (1-${pdf.numPages}).`);
+    updateProgress(20 + Math.floor(((pageNo - pageRange.start) / Math.max(1, pageRange.end - pageRange.start + 1)) * 55), `Parsing M1PR page ${pageNo}...`);
+    const page = await pdf.getPage(pageNo);
+    const textContent = await page.getTextContent();
+    parsedRows = parsedRows.concat(parseHomeownerRefundPageRows(textContent.items));
+  }
+  if (parsedRows.length === 0) throw new Error('Deterministic parser found no homeowner-refund rows in the selected page range.');
+  return buildHomeownerRefundTables(parsedRows);
+}
+
 async function extractPdfDeterministically(filePath, pageRange, config, lookUpTypes) {
   const fileResult = await window.api.readBinaryFileAsBase64(filePath);
   if (!fileResult.success) throw new Error(fileResult.message || 'Failed to read selected PDF.');
@@ -553,6 +833,7 @@ function getMarriageCreditStatusClass(row) {
 }
 
 async function extractData() {
+  clearToast();
   if (!appState.selectedPdfPath) return showToast('Please select a PDF first.', 'error');
   const pageRange = getEffectivePdfPageRange();
   if (!pageRange) return showToast('Please enter valid PDF start and end pages first.', 'error');
@@ -565,6 +846,39 @@ async function extractData() {
       const currentTable = currentPath ? await window.api.readMarriageCreditTable(currentPath) : null;
       updateProgress(20, 'Parsing Schedule M1MA PDF text directly...');
       appState.marriageCreditReview = buildMarriageCreditReview((await extractMarriageCreditFromPdf(appState.selectedPdfPath, pageRange)).rows, currentTable && currentTable.success ? currentTable : null);
+      appState.homeownerRefundReview = null;
+      appState.extractedData = null;
+      appState.diffResults = null;
+      renderExtractedDataSection();
+      renderDiffSection();
+      renderMarriageCreditSection();
+      updateActionButtons();
+      updateProgress(100, 'Complete!');
+      return setTimeout(() => setExtracting(false), 800);
+    }
+
+    if (isHomeownerRefundWorkflow()) {
+      const targets = getActiveFileTargets();
+      const rowPath = appState.filePaths[targets[0].key];
+      const refundPath = appState.filePaths[targets[1].key];
+      updateProgress(10, 'Reading current homeowner-refund JSON files...');
+      const currentRowTable = rowPath ? await window.api.readGenericTable(rowPath) : null;
+      const currentRefundTable = refundPath ? await window.api.readGenericTable(refundPath) : null;
+      updateProgress(20, 'Parsing M1PR Homestead Credit Refund Table...');
+      const extractedTables = await extractHomeownerRefundFromPdf(appState.selectedPdfPath, pageRange);
+      const currentRefundRows = currentRefundTable && currentRefundTable.success ? currentRefundTable.rows : [];
+      appState.homeownerRefundUi = {
+        activeTab: appState.homeownerRefundUi?.activeTab || 'rowTable',
+        statusFilters: {
+          rowTable: appState.homeownerRefundUi?.statusFilters?.rowTable || 'all',
+          refundTable: appState.homeownerRefundUi?.statusFilters?.refundTable || 'all'
+        }
+      };
+      appState.homeownerRefundReview = {
+        rowTable: buildGenericTableReview(extractedTables.rowTableRows, currentRowTable && currentRowTable.success ? currentRowTable : null),
+        refundTable: buildGenericTableReview(overlayGenericTableRows(currentRefundRows, extractedTables.refundRows), currentRefundTable && currentRefundTable.success ? currentRefundTable : null, { extractedCountOverride: extractedTables.refundRows.length })
+      };
+      appState.marriageCreditReview = null;
       appState.extractedData = null;
       appState.diffResults = null;
       renderExtractedDataSection();
@@ -596,6 +910,7 @@ async function extractData() {
     console.error('Extraction error:', error);
   }
 }
+
 async function buildDiff() {
   const config = appState.selectedStateConfig;
   const diffResults = {};
@@ -630,7 +945,7 @@ async function buildDiff() {
 function renderDiffSection() {
   const container = document.getElementById('diffSection');
   const config = appState.selectedStateConfig;
-  if (isMarriageCreditWorkflow() || !appState.diffResults || !config) { container.style.display = 'none'; return; }
+  if (isMarriageCreditWorkflow() || isHomeownerRefundWorkflow() || !appState.diffResults || !config) { container.style.display = 'none'; return; }
   container.style.display = 'block';
   const tabsHtml = config.filingStatuses.map((status, i) => {
     const diff = appState.diffResults[status.key];
@@ -663,8 +978,79 @@ function showDiffTab(statusKey) {
   document.getElementById(`diff-panel-${statusKey}`)?.classList.add('active');
 }
 
+function getGenericReviewStatusLabel(row) {
+  if (row.reviewStatus === 'changed') return 'Changed';
+  if (row.reviewStatus === 'match') return 'Match';
+  return 'New';
+}
+
+function getGenericReviewStatusClass(row) {
+  if (row.reviewStatus === 'changed') return 'badge-changed';
+  if (row.reviewStatus === 'match') return 'badge-ok';
+  return 'badge-accent';
+}
+
+function ensureHomeownerRefundUiState() {
+  if (!appState.homeownerRefundUi) {
+    appState.homeownerRefundUi = {
+      activeTab: 'rowTable',
+      statusFilters: { rowTable: 'all', refundTable: 'all' }
+    };
+  }
+  if (!appState.homeownerRefundUi.statusFilters) appState.homeownerRefundUi.statusFilters = { rowTable: 'all', refundTable: 'all' };
+  if (!appState.homeownerRefundUi.activeTab) appState.homeownerRefundUi.activeTab = 'rowTable';
+}
+
+function getFilteredGenericReviewRows(review, statusFilter) {
+  if (!review?.rows) return [];
+  if (!statusFilter || statusFilter === 'all') return review.rows;
+  return review.rows.filter(row => row.reviewStatus === statusFilter);
+}
+
+function renderGenericStatusFilter(filterKey, currentValue) {
+  return `<label class="review-filter-label">Status<select class="review-filter homeowner-refund-status-filter" data-filter-key="${filterKey}"><option value="all" ${currentValue === 'all' ? 'selected' : ''}>All</option><option value="changed" ${currentValue === 'changed' ? 'selected' : ''}>Changed</option><option value="match" ${currentValue === 'match' ? 'selected' : ''}>Match</option><option value="new" ${currentValue === 'new' ? 'selected' : ''}>New</option></select></label>`;
+}
+
+function showHomeownerRefundReviewTab(tabKey) {
+  ensureHomeownerRefundUiState();
+  appState.homeownerRefundUi.activeTab = tabKey;
+  renderMarriageCreditSection();
+}
+
+function renderHomeownerRefundReviewTable(review, options) {
+  ensureHomeownerRefundUiState();
+  const activeFilter = appState.homeownerRefundUi.statusFilters[options.filterKey] || 'all';
+  const filteredRows = getFilteredGenericReviewRows(review, activeFilter);
+  const rowsHtml = filteredRows.map((row, index) => `<tr><td>${index + 1}</td>${options.renderCells(row)}<td><span class="diff-badge ${getGenericReviewStatusClass(row)}">${getGenericReviewStatusLabel(row)}</span></td></tr>`).join('');
+  const emptyHtml = `<div class="diff-empty">No rows match the current status filter.</div>`;
+  return `<div class="content-section"><div class="section-header"><div><h2 class="section-title">${options.title}</h2><p class="section-subtitle">${options.subtitle}</p></div><div class="review-toolbar">${renderGenericStatusFilter(options.filterKey, activeFilter)}</div></div><div class="diff-summary"><div class="diff-stat"><span class="diff-stat-value">${filteredRows.length}</span><span class="diff-stat-label">Visible rows</span></div><div class="diff-stat"><span class="diff-stat-value">${review.rows.length}</span><span class="diff-stat-label">Preview rows</span></div><div class="diff-stat"><span class="diff-stat-value ok">${review.extractedCount}</span><span class="diff-stat-label">Extracted from PDF</span></div><div class="diff-stat"><span class="diff-stat-value ${review.changedCount > 0 ? 'changed' : 'ok'}">${review.changedCount}</span><span class="diff-stat-label">Changed vs file</span></div><div class="diff-stat"><span class="diff-stat-value ok">${review.unchangedCount}</span><span class="diff-stat-label">Unchanged vs file</span></div><div class="diff-stat"><span class="diff-stat-value ${review.missingCount > 0 ? 'warn' : 'ok'}">${review.missingCount}</span><span class="diff-stat-label">Still missing</span></div>${review.currentYear ? `<div class="diff-stat"><span class="diff-stat-value">${review.currentYear} -> ${appState.taxYear}</span><span class="diff-stat-label">Year update</span></div>` : ''}</div>${filteredRows.length === 0 ? emptyHtml : `<div class="diff-table-wrapper marriage-credit-table-wrapper"><table class="diff-table marriage-credit-table"><thead><tr><th>#</th>${options.headerHtml}<th>Status</th></tr></thead><tbody>${rowsHtml}</tbody></table></div>`}</div>`;
+}
+
 function renderMarriageCreditSection() {
   const container = document.getElementById('marriageCreditSection');
+
+  if (isHomeownerRefundWorkflow()) {
+    const review = appState.homeownerRefundReview;
+    if (!review) { container.style.display = 'none'; container.innerHTML = ''; return; }
+    ensureHomeownerRefundUiState();
+    container.style.display = 'block';
+    const tabs = [
+      { key: 'rowTable', label: 'Row Table', badge: review.rowTable.changedCount },
+      { key: 'refundTable', label: 'Refund Table', badge: review.refundTable.changedCount }
+    ];
+    const tabsHtml = tabs.map(tab => `<button class="diff-tab homeowner-refund-tab ${appState.homeownerRefundUi.activeTab === tab.key ? 'active' : ''}" data-homeowner-tab="${tab.key}">${tab.label}<span class="diff-badge ${tab.badge > 0 ? 'badge-changed' : 'badge-ok'}">${tab.badge}</span></button>`).join('');
+    const rowPanelHtml = `<div class="diff-panel homeowner-refund-panel ${appState.homeownerRefundUi.activeTab === 'rowTable' ? 'active' : ''}" id="homeowner-refund-panel-rowTable">${renderHomeownerRefundReviewTable(review.rowTable, { title: 'Review Homeowner Refund Row Table', subtitle: 'Generated row lookup for the Homestead Credit Refund Table. The first extracted row is remapped to lower boundary -1000000.', headerHtml: '<th>MNAmtDecNN (Row Lower Boundary)</th><th>Value</th>', filterKey: 'rowTable', renderCells: row => `<td>${row.key[0].toLocaleString()}</td><td>${row.value.toLocaleString()}</td>` })}</div>`;
+    const refundPanelHtml = `<div class="diff-panel homeowner-refund-panel ${appState.homeownerRefundUi.activeTab === 'refundTable' ? 'active' : ''}" id="homeowner-refund-panel-refundTable">${renderHomeownerRefundReviewTable(review.refundTable, { title: 'Review Homeowner Refund Table', subtitle: 'Generated two-key refund grid for M1PR using row number plus property-tax amount.', headerHtml: '<th>Integer (Row Number)</th><th>MNAmtDecNN (Amount)</th><th>Value</th>', filterKey: 'refundTable', renderCells: row => `<td>${row.key[0].toLocaleString()}</td><td>${row.key[1].toLocaleString()}</td><td>${row.value.toLocaleString()}</td>` })}</div>`;
+    container.innerHTML = `<div class="section-header"><h2 class="section-title">Review Homeowner Refund Tables</h2><p class="section-subtitle">Switch between the generated row lookup and refund grid, then use the status filter to jump to changed rows quickly.</p></div><div class="diff-tabs homeowner-refund-tabs">${tabsHtml}</div><div class="diff-panels homeowner-refund-panels">${rowPanelHtml}${refundPanelHtml}</div>`;
+    container.querySelectorAll('.homeowner-refund-tab').forEach(tab => tab.addEventListener('click', () => showHomeownerRefundReviewTab(tab.dataset.homeownerTab)));
+    container.querySelectorAll('.homeowner-refund-status-filter').forEach(select => select.addEventListener('change', event => {
+      ensureHomeownerRefundUiState();
+      appState.homeownerRefundUi.statusFilters[event.target.dataset.filterKey] = event.target.value;
+      renderMarriageCreditSection();
+    }));
+    return;
+  }
+
   const review = appState.marriageCreditReview;
   if (!isMarriageCreditWorkflow() || !review) { container.style.display = 'none'; container.innerHTML = ''; return; }
   const warningHtml = review.warnings.map(message => `<div class="review-alert warn">${message}</div>`).join('');
@@ -672,16 +1058,17 @@ function renderMarriageCreditSection() {
   container.style.display = 'block';
   container.innerHTML = `<div class="content-section"><div class="section-header"><div><h2 class="section-title">Review Marriage Credit Table</h2><p class="section-subtitle">Full extracted grid for MN Schedule M1MA. Approve this preview before replacing the JSON file.</p></div></div>${warningHtml}<div class="diff-summary"><div class="diff-stat"><span class="diff-stat-value">${review.rows.length}</span><span class="diff-stat-label">Preview rows</span></div><div class="diff-stat"><span class="diff-stat-value ok">${review.extractedCount}</span><span class="diff-stat-label">Extracted from PDF</span></div><div class="diff-stat"><span class="diff-stat-value ${review.carriedCount > 0 ? 'warn' : 'ok'}">${review.carriedCount}</span><span class="diff-stat-label">Carried from file</span></div><div class="diff-stat"><span class="diff-stat-value ${review.changedCount > 0 ? 'changed' : 'ok'}">${review.changedCount}</span><span class="diff-stat-label">Changed vs file</span></div><div class="diff-stat"><span class="diff-stat-value ok">${review.unchangedCount}</span><span class="diff-stat-label">Unchanged vs file</span></div><div class="diff-stat"><span class="diff-stat-value ${review.missingCount > 0 ? 'warn' : 'ok'}">${review.missingCount}</span><span class="diff-stat-label">Still missing</span></div>${review.currentYear ? `<div class="diff-stat"><span class="diff-stat-value">${review.currentYear} -> ${appState.taxYear}</span><span class="diff-stat-label">Year update</span></div>` : ''}</div><div class="diff-table-wrapper marriage-credit-table-wrapper"><table class="diff-table marriage-credit-table"><thead><tr><th>#</th><th>MNAmtDec (SeparateIncome)</th><th>MNAmtDecNN (JointIncome)</th><th>Value</th><th>Status</th></tr></thead><tbody>${rowsHtml}</tbody></table></div></div>`;
 }
-
 async function updateJsonFiles() {
   if (isMarriageCreditWorkflow()) return replaceMarriageCreditJson();
+  if (isHomeownerRefundWorkflow()) return replaceHomeownerRefundJson();
   const config = appState.selectedStateConfig;
   if (!config.filingStatuses.every(s => appState.filePaths[s.key])) return showToast('Please select all JSON file paths before updating.', 'error');
   setUpdating(true);
   const results = await window.api.updateJsonFiles({ taxYear: appState.taxYear, updates: config.filingStatuses.map(status => ({ statusKey: status.key, filePath: appState.filePaths[status.key], newValues: appState.extractedData[status.key] })) });
   setUpdating(false);
   if (results.every(r => r.success)) { showToast(`All ${results.length} JSON files updated successfully for tax year ${appState.taxYear}.`, 'success'); return buildDiff(); }
-  showToast(`Some files failed to update:\n${results.filter(r => !r.success).map(f => `${f.statusKey}: ${f.message}`).join('\n')}`, 'error');
+  showToast(`Some files failed to update:
+${results.filter(r => !r.success).map(f => `${f.statusKey}: ${f.message}`).join('\n')}`, 'error');
 }
 
 async function replaceMarriageCreditJson() {
@@ -700,6 +1087,39 @@ async function replaceMarriageCreditJson() {
   showToast(`Marriage credit JSON replaced with ${result.updatedCount} rows.`, 'success');
 }
 
+async function replaceHomeownerRefundJson() {
+  const review = appState.homeownerRefundReview;
+  const rowPath = appState.filePaths.M1PR_ROW;
+  const refundPath = appState.filePaths.M1PR_REFUND;
+  if (!rowPath || !refundPath) return showToast('Please configure both M1PR JSON paths before replacing.', 'error');
+  if (!review?.rowTable?.rows?.length || !review?.refundTable?.rows?.length) return showToast('Please extract and review the homeowner-refund tables first.', 'error');
+
+  setUpdating(true);
+  const [rowResult, refundResult] = await Promise.all([
+    window.api.replaceGenericTable({ filePath: rowPath, taxYear: appState.taxYear, rows: review.rowTable.rows.map(row => ({ key: row.key, value: row.value })) }),
+    window.api.replaceGenericTable({ filePath: refundPath, taxYear: appState.taxYear, rows: normalizeHomeownerRefundJsonRows(review.refundTable.rows) })
+  ]);
+  setUpdating(false);
+
+  if (!rowResult.success || !refundResult.success) {
+    return showToast(`Homeowner refund replace failed:
+${[rowResult, refundResult].filter(result => !result.success).map(result => result.message).join('\n')}`, 'error');
+  }
+
+  const [refreshedRowTable, refreshedRefundTable] = await Promise.all([
+    window.api.readGenericTable(rowPath),
+    window.api.readGenericTable(refundPath)
+  ]);
+
+  appState.homeownerRefundReview = {
+    rowTable: buildGenericTableReview(review.rowTable.rows, refreshedRowTable.success ? refreshedRowTable : null),
+    refundTable: buildGenericTableReview(review.refundTable.rows, refreshedRefundTable.success ? refreshedRefundTable : null, { extractedCountOverride: review.refundTable.extractedCount })
+  };
+  renderMarriageCreditSection();
+  updateActionButtons();
+  showToast(`Homeowner refund JSON replaced with ${rowResult.updatedCount + refundResult.updatedCount} rows across both files.`, 'success');
+}
+
 function renderExtractedDataSection() {
   const section = document.getElementById('extractedDataSection');
   if (isMarriageCreditWorkflow()) {
@@ -712,6 +1132,17 @@ function renderExtractedDataSection() {
     document.getElementById('extractionSummary').innerHTML = `<div class="extraction-stat"><span>${review.extractedCount}</span><label>PDF rows</label></div><div class="extraction-stat"><span>${separateBrackets.length}</span><label>Separate-income brackets</label></div><div class="extraction-stat"><span>${jointBrackets.length}</span><label>Joint-income brackets</label></div><div class="extraction-stat"><span>${maxValue.toLocaleString()}</span><label>Max credit</label></div>`;
     return;
   }
+  if (isHomeownerRefundWorkflow()) {
+    if (!appState.homeownerRefundReview) { section.style.display = 'none'; return; }
+    const review = appState.homeownerRefundReview;
+    const rowCount = review.rowTable.rows.length;
+    const refundCount = review.refundTable.rows.length;
+    const amountColumns = getUniqueSorted(review.refundTable.rows.map(row => row.key[1]));
+    const maxRefund = Math.max(...review.refundTable.rows.map(row => row.value));
+    section.style.display = 'block';
+    document.getElementById('extractionSummary').innerHTML = `<div class="extraction-stat"><span>${rowCount}</span><label>Row-table entries</label></div><div class="extraction-stat"><span>${refundCount}</span><label>Refund entries</label></div><div class="extraction-stat"><span>${amountColumns.length}</span><label>Amount columns</label></div><div class="extraction-stat"><span>${maxRefund.toLocaleString()}</span><label>Max refund</label></div>`;
+    return;
+  }
   if (!appState.extractedData) { section.style.display = 'none'; return; }
   const maxIncome = Math.max(...Object.values(appState.extractedData).flatMap(v => Object.keys(v).map(Number)));
   const totalEntries = Math.max(...Object.values(appState.extractedData).map(vals => Object.keys(vals).length));
@@ -721,14 +1152,18 @@ function renderExtractedDataSection() {
 
 function setExtracting(active) {
   document.getElementById('extractBtn').disabled = active;
-  document.getElementById('extractBtn').textContent = active ? (isMarriageCreditWorkflow() ? 'Extracting Marriage Credit...' : 'Extracting...') : (isMarriageCreditWorkflow() ? 'Extract Marriage Credit Table' : 'Extract Data from PDF');
+  document.getElementById('extractBtn').textContent = active
+    ? (isMarriageCreditWorkflow() ? 'Extracting Marriage Credit...' : isHomeownerRefundWorkflow() ? 'Extracting Homeowner Refund...' : 'Extracting...')
+    : (isMarriageCreditWorkflow() ? 'Extract Marriage Credit Table' : isHomeownerRefundWorkflow() ? 'Extract Homeowner Refund Tables' : 'Extract Data from PDF');
   document.getElementById('extractionProgress').style.display = active ? 'block' : 'none';
   if (!active) updateProgress(0, '');
 }
 
 function setUpdating(active) {
   document.getElementById('updateJsonBtn').disabled = active;
-  document.getElementById('updateJsonBtn').textContent = active ? (isMarriageCreditWorkflow() ? 'Replacing...' : 'Updating...') : (isMarriageCreditWorkflow() ? 'Replace Marriage Credit JSON' : 'Update JSON Files');
+  document.getElementById('updateJsonBtn').textContent = active
+    ? (isMarriageCreditWorkflow() || isHomeownerRefundWorkflow() ? 'Replacing...' : 'Updating...')
+    : (isMarriageCreditWorkflow() ? 'Replace Marriage Credit JSON' : isHomeownerRefundWorkflow() ? 'Replace Homeowner Refund JSON' : 'Update JSON Files');
 }
 
 function updateProgress(pct, msg) {
@@ -739,19 +1174,29 @@ function updateProgress(pct, msg) {
 function updateActionButtons() {
   const hasSource = Boolean(appState.selectedPdfPath) && Boolean(getEffectivePdfPageRange());
   const allPathsSet = getActiveFileTargets().length > 0 && getActiveFileTargets().every(target => appState.filePaths[target.key]);
-  const hasExtracted = isMarriageCreditWorkflow() ? Boolean(appState.marriageCreditReview?.rows?.length) : Boolean(appState.extractedData);
+  const hasExtracted = isMarriageCreditWorkflow()
+    ? Boolean(appState.marriageCreditReview?.rows?.length)
+    : isHomeownerRefundWorkflow()
+      ? Boolean(appState.homeownerRefundReview?.rowTable?.rows?.length && appState.homeownerRefundReview?.refundTable?.rows?.length)
+      : Boolean(appState.extractedData);
   document.getElementById('extractBtn').disabled = !hasSource;
   document.getElementById('updateJsonBtn').disabled = !(hasExtracted && allPathsSet);
 }
-
 let toastTimeout;
+function clearToast() {
+  const toast = document.getElementById('toast');
+  clearTimeout(toastTimeout);
+  toast.classList.remove('show');
+  toast.className = 'toast';
+  toast.textContent = '';
+}
 function showToast(message, type = 'info') {
   const toast = document.getElementById('toast');
   toast.textContent = message;
   toast.className = `toast toast-${type} show`;
   clearTimeout(toastTimeout);
-  if (type === 'error') return;
-  toastTimeout = setTimeout(() => toast.classList.remove('show'), 4000);
+  const timeoutMs = type === 'error' ? 8000 : 4000;
+  toastTimeout = setTimeout(() => toast.classList.remove('show'), timeoutMs);
 }
 
 function bindEvents() {
@@ -761,13 +1206,13 @@ function bindEvents() {
   });
   document.getElementById('workflowSelect').addEventListener('change', e => onWorkflowChange(e.target.value));
   document.getElementById('selectPdfBtn').addEventListener('click', selectPdf);
-  document.getElementById('pdfPageStartInput').addEventListener('input', e => { appState.pdfPageRangeOverride.start = e.target.value.trim(); renderSelectedSource(); updateActionButtons(); });
-  document.getElementById('pdfPageEndInput').addEventListener('input', e => { appState.pdfPageRangeOverride.end = e.target.value.trim(); renderSelectedSource(); updateActionButtons(); });
+  document.getElementById('pdfPageStartInput').addEventListener('input', e => { clearToast(); appState.pdfPageRangeOverride.start = e.target.value.trim(); renderSelectedSource(); updateActionButtons(); });
+  document.getElementById('pdfPageEndInput').addEventListener('input', e => { clearToast(); appState.pdfPageRangeOverride.end = e.target.value.trim(); renderSelectedSource(); updateActionButtons(); });
   document.getElementById('extractBtn').addEventListener('click', extractData);
   document.getElementById('updateJsonBtn').addEventListener('click', updateJsonFiles);
 }
 
-if (typeof module !== 'undefined' && module.exports) module.exports = { appState, parseIntegerText, groupPdfTextItemsByRow, findNumericItemsInRange, findMinnesotaValueWindow, parseMinnesotaPdfRows, parseMarriageCreditPdfRows, parseMarriageCreditFromFullText, parseOrPdfRows, normalizeDeterministicRowsToData, mergeExtractedData, sortMarriageCreditRows, buildMarriageCreditReview, getEffectivePdfPageRange, renderSelectedSource, updateActionButtons, showDiffTab };
+if (typeof module !== 'undefined' && module.exports) module.exports = { appState, parseIntegerText, groupPdfTextItemsByRow, findNumericItemsInRange, findMinnesotaValueWindow, parseMinnesotaPdfRows, parseMarriageCreditPdfRows, parseMarriageCreditFromFullText, parseHomeownerRefundPageRows, buildHomeownerRefundTables, overlayGenericTableRows, normalizeHomeownerRefundJsonRows, parseOrPdfRows, normalizeDeterministicRowsToData, mergeExtractedData, sortMarriageCreditRows, buildMarriageCreditReview, buildGenericTableReview, getEffectivePdfPageRange, renderSelectedSource, updateActionButtons, showDiffTab };
 if (typeof window !== 'undefined' && typeof document !== 'undefined') init();
 
 
