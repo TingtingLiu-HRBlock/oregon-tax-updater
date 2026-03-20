@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld('api', {
   updateJsonFiles: (payload) => ipcRenderer.invoke('update-json-files', payload),
   readMarriageCreditTable: (filePath) => ipcRenderer.invoke('read-marriage-credit-table', filePath),
   replaceMarriageCreditTable: (payload) => ipcRenderer.invoke('replace-marriage-credit-table', payload),
+  readGenericTable: (filePath) => ipcRenderer.invoke('read-generic-table', filePath),
+  replaceGenericTable: (payload) => ipcRenderer.invoke('replace-generic-table', payload),
 
   // Export
   exportTextFile: (content) => ipcRenderer.invoke('export-text-file', content),
