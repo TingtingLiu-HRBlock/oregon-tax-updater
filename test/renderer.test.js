@@ -8,8 +8,11 @@ const {
   parseMinnesotaPdfRows,
   parseMarriageCreditFromFullText,
   parseHomeownerRefundPageRows,
+  parseRenterRefundPageRows,
   buildHomeownerRefundTables,
+  buildRenterRefundTables,
   overlayGenericTableRows,
+  normalizeRefundJsonRows,
   normalizeHomeownerRefundJsonRows,
   parseOrPdfRows,
   normalizeDeterministicRowsToData,
@@ -282,6 +285,95 @@ test('MN M1PR regression: parser keeps the final & over row with no numeric uppe
   assert.equal(parsedRows[0].amountStarts.length, 9);
   assert.equal(parsedRows[0].values.length, 9);
   assert.ok(parsedRows[0].values.every(value => value === 0));
+});
+
+test('MN M1RENT regression: final page accepts upper header rows that say and up', () => {
+  const parsedRows = parseRenterRefundPageRows([
+    pdfTextItem('If Schedule M1RENT,', 40, 700), pdfTextItem('$2,250', 160, 700), pdfTextItem('2,275', 200, 700), pdfTextItem('2,300', 240, 700), pdfTextItem('2,325', 280, 700), pdfTextItem('2,350', 320, 700),
+    pdfTextItem('$2,275', 160, 680), pdfTextItem('2,300', 200, 680), pdfTextItem('2,325', 240, 680), pdfTextItem('2,350', 280, 680), pdfTextItem('2,375', 320, 680), pdfTextItem('and up', 360, 680),
+    pdfTextItem('0', 80, 640), pdfTextItem('2,210', 130, 640), pdfTextItem('2,139', 170, 640), pdfTextItem('2,163', 210, 640), pdfTextItem('2,186', 250, 640), pdfTextItem('2,210', 290, 640), pdfTextItem('*', 330, 640)
+  ]);
+
+  assert.deepEqual(parsedRows[0].amountStarts, [2250, 2275, 2300, 2325, 2350]);
+  assert.deepEqual(parsedRows[0].values, [2139, 2163, 2186, 2210, 99999]);
+  assert.deepEqual(parsedRows[0].starValueIndices, [4]);
+});
+
+test('MN M1RENT regression: dollar-prefixed header amounts keep the 0 column aligned', () => {
+  const parsedRows = parseRenterRefundPageRows([
+    pdfTextItem('If Schedule M1RENT,', 40, 700), pdfTextItem('$ 0', 160, 700), pdfTextItem('25', 190, 700), pdfTextItem('50', 220, 700), pdfTextItem('75', 250, 700), pdfTextItem('100', 280, 700),
+    pdfTextItem('$25', 160, 680), pdfTextItem('50', 190, 680), pdfTextItem('75', 220, 680), pdfTextItem('100', 250, 680), pdfTextItem('125', 280, 680),
+    pdfTextItem('0', 80, 640), pdfTextItem('2,210', 130, 640), pdfTextItem('1', 170, 640), pdfTextItem('25', 200, 640), pdfTextItem('49', 230, 640), pdfTextItem('73', 260, 640), pdfTextItem('96', 290, 640),
+    pdfTextItem('2,210', 80, 620), pdfTextItem('4,430', 130, 620), pdfTextItem('0', 170, 620), pdfTextItem('4', 200, 620), pdfTextItem('28', 230, 620), pdfTextItem('52', 260, 620), pdfTextItem('75', 290, 620)
+  ]);
+
+  const tables = buildRenterRefundTables(parsedRows);
+
+  assert.deepEqual(parsedRows[0].amountStarts, [0, 25, 50, 75, 100]);
+  assert.deepEqual(parsedRows[0].values, [1, 25, 49, 73, 96]);
+  assert.deepEqual(tables.refundRows.filter(row => row.key[0] === 1).map(row => ({ key: row.key, value: row.value })), [
+    { key: [1, 0], value: 1 },
+    { key: [1, 25], value: 25 },
+    { key: [1, 50], value: 49 },
+    { key: [1, 75], value: 73 },
+    { key: [1, 100], value: 96 }
+  ]);
+});
+
+test('MN M1RENT regression: parser builds row and refund tables with first lower boundary -100000', () => {
+  const parsedRows = parseRenterRefundPageRows([
+    pdfTextItem('0', 100, 700), pdfTextItem('25', 150, 700), pdfTextItem('50', 200, 700), pdfTextItem('75', 250, 700), pdfTextItem('100', 300, 700), pdfTextItem('125', 350, 700), pdfTextItem('150', 400, 700), pdfTextItem('175', 450, 700), pdfTextItem('200', 500, 700), pdfTextItem('225', 550, 700), pdfTextItem('250', 600, 700),
+    pdfTextItem('25', 100, 680), pdfTextItem('50', 150, 680), pdfTextItem('75', 200, 680), pdfTextItem('100', 250, 680), pdfTextItem('125', 300, 680), pdfTextItem('150', 350, 680), pdfTextItem('175', 400, 680), pdfTextItem('200', 450, 680), pdfTextItem('225', 500, 680), pdfTextItem('250', 550, 680), pdfTextItem('275', 600, 680),
+    pdfTextItem('0', 100, 640), pdfTextItem('2,210', 150, 640), pdfTextItem('4', 200, 640), pdfTextItem('28', 250, 640), pdfTextItem('52', 300, 640), pdfTextItem('75', 350, 640), pdfTextItem('99', 400, 640), pdfTextItem('123', 450, 640), pdfTextItem('147', 500, 640), pdfTextItem('170', 550, 640), pdfTextItem('194', 600, 640), pdfTextItem('218', 650, 640), pdfTextItem('242', 700, 640),
+    pdfTextItem('2,210', 100, 620), pdfTextItem('4,430', 150, 620), pdfTextItem('0', 200, 620), pdfTextItem('4', 250, 620), pdfTextItem('28', 300, 620), pdfTextItem('52', 350, 620), pdfTextItem('75', 400, 620), pdfTextItem('99', 450, 620), pdfTextItem('123', 500, 620), pdfTextItem('147', 550, 620), pdfTextItem('170', 600, 620), pdfTextItem('194', 650, 620), pdfTextItem('218', 700, 620)
+  ]);
+
+  const tables = buildRenterRefundTables(parsedRows);
+
+  assert.equal(parsedRows.length, 2);
+  assert.deepEqual(tables.rowTableRows, [
+    { key: [-100000], value: 1 },
+    { key: [2210], value: 2 }
+  ]);
+  assert.equal(tables.refundRows[0].key[0], 1);
+  assert.equal(tables.refundRows[0].key[1], 0);
+  assert.equal(tables.refundRows[0].value, 4);
+  assert.equal(tables.refundRows.at(-1).key[0], 2);
+  assert.equal(tables.refundRows.at(-1).key[1], 250);
+  assert.equal(tables.refundRows.at(-1).value, 218);
+});
+
+test('MN M1RENT regression: starred 2500 cells normalize to 99999', () => {
+  const parsedRows = parseRenterRefundPageRows([
+    pdfTextItem('2,300', 100, 700), pdfTextItem('2,325', 150, 700), pdfTextItem('2,350', 200, 700), pdfTextItem('2,375', 250, 700), pdfTextItem('2,400', 300, 700), pdfTextItem('2,425', 350, 700), pdfTextItem('2,450', 400, 700), pdfTextItem('2,475', 450, 700), pdfTextItem('2,500', 500, 700),
+    pdfTextItem('2,325', 100, 680), pdfTextItem('2,350', 150, 680), pdfTextItem('2,375', 200, 680), pdfTextItem('2,400', 250, 680), pdfTextItem('2,425', 300, 680), pdfTextItem('2,450', 350, 680), pdfTextItem('2,475', 400, 680), pdfTextItem('2,500', 450, 680), pdfTextItem('& up', 500, 680),
+    pdfTextItem('0', 100, 640), pdfTextItem('2,210', 150, 640), pdfTextItem('96', 200, 640), pdfTextItem('120', 250, 640), pdfTextItem('144', 300, 640), pdfTextItem('168', 350, 640), pdfTextItem('191', 400, 640), pdfTextItem('215', 450, 640), pdfTextItem('239', 500, 640), pdfTextItem('263', 550, 640), pdfTextItem('*', 600, 640)
+  ]);
+
+  const tables = buildRenterRefundTables(parsedRows);
+  const finalCell = tables.refundRows.find(row => row.key[0] === 1 && row.key[1] === 2500);
+
+  assert.equal(finalCell?.value, 99999);
+  assert.equal(finalCell?.isStarValue, true);
+  assert.deepEqual(normalizeRefundJsonRows([{ key: [1, 2500], value: 0, isStarValue: true }]), [{ key: [1, 2500], value: 99999 }]);
+});
+
+test('MN M1RENT regression: full renter table shape builds 36 row entries and 3636 refund entries', () => {
+  const amountStarts = Array.from({ length: 101 }, (_, index) => index * 25);
+  const parsedRows = Array.from({ length: 36 }, (_, rowIndex) => ({
+    rowLower: rowIndex * 2210,
+    rowUpper: rowIndex === 35 ? null : (rowIndex + 1) * 2210,
+    amountStarts,
+    values: amountStarts.map(amount => rowIndex + amount),
+    starValueIndices: rowIndex === 0 ? [amountStarts.length - 1] : []
+  }));
+
+  const tables = buildRenterRefundTables(parsedRows);
+
+  assert.equal(tables.rowTableRows.length, 36);
+  assert.equal(tables.refundRows.length, 3636);
+  assert.deepEqual(tables.rowTableRows[0], { key: [-100000], value: 1 });
+  assert.deepEqual(tables.refundRows.at(-1).key, [36, 2500]);
 });
 
 test('OR scenario checkpoints: Oregon parser keeps representative values through 49,900', () => {

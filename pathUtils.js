@@ -12,6 +12,14 @@ function getHomeownerRefundCanonicalPath(regulatoryYear) {
   return String.raw`C:\TaxEngine\OCE-Regulatory-${regulatoryYear}\Source\MN\Utils\Tables\M1PRHomeownerRefundTable.table.json`;
 }
 
+function getRenterRefundRowCanonicalPath(regulatoryYear) {
+  return String.raw`C:\TaxEngine\OCE-Regulatory-${regulatoryYear}\Source\MN\Utils\Tables\M1PRRenterRefundRowTable.table.json`;
+}
+
+function getRenterRefundCanonicalPath(regulatoryYear) {
+  return String.raw`C:\TaxEngine\OCE-Regulatory-${regulatoryYear}\Source\MN\Utils\Tables\M1PRRenterRefundTable.table.json`;
+}
+
 function buildDefaultPaths(stateCode, regulatoryYear, workflowKey = 'standard') {
   if (stateCode === 'MN' && workflowKey === 'm1ma') {
     return {
@@ -23,6 +31,13 @@ function buildDefaultPaths(stateCode, regulatoryYear, workflowKey = 'standard') 
     return {
       M1PR_ROW: getHomeownerRefundRowCanonicalPath(regulatoryYear),
       M1PR_REFUND: getHomeownerRefundCanonicalPath(regulatoryYear)
+    };
+  }
+
+  if (stateCode === 'MN' && workflowKey === 'm1rent') {
+    return {
+      M1PR_ROW: getRenterRefundRowCanonicalPath(regulatoryYear),
+      M1PR_REFUND: getRenterRefundCanonicalPath(regulatoryYear)
     };
   }
 
@@ -78,7 +93,10 @@ module.exports = {
   getMarriageCreditCanonicalPath,
   getHomeownerRefundRowCanonicalPath,
   getHomeownerRefundCanonicalPath,
+  getRenterRefundRowCanonicalPath,
+  getRenterRefundCanonicalPath,
   buildDefaultPaths,
   buildStorageKey,
   normalizeSavedPaths
 };
+

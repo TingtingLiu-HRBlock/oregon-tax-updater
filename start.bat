@@ -1,6 +1,6 @@
 @echo off
 echo ========================================
-echo Oregon Tax Table Updater
+echo State Tax Table Updater
 echo ========================================
 echo.
 echo Starting the application...

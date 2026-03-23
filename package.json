@@ -12,7 +12,8 @@
     "appId": "com.hrblock.state-tax-updater",
     "productName": "State Tax Table Updater",
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "artifactName": "State-Tax-Table-Updater-Setup-${version}.${ext}"
     },
     "files": [
       "main.js",
@@ -22,14 +23,20 @@
       "styles.css",
       "states/**",
       "assets/**"
-    ]
+    ],
+    "nsis": {
+      "shortcutName": "State Tax Table Updater",
+      "uninstallDisplayName": "State Tax Table Updater",
+      "artifactName": "State-Tax-Table-Updater-Setup-${version}.${ext}"
+    },
+    "executableName": "StateTaxTableUpdater"
   },
   "dependencies": {
-    "electron": "^28.0.0",
     "pdfjs-dist": "^4.8.69"
   },
   "devDependencies": {
-    "electron-builder": "^24.0.0"
-  }
+    "electron-builder": "^24.0.0",
+    "electron": "^28.0.0"
+  },
+  "author": "H&R Block"
 }
-

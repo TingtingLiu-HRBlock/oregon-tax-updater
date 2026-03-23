@@ -6,7 +6,9 @@ const {
   normalizeSavedPaths,
   getMarriageCreditCanonicalPath,
   getHomeownerRefundRowCanonicalPath,
-  getHomeownerRefundCanonicalPath
+  getHomeownerRefundCanonicalPath,
+  getRenterRefundRowCanonicalPath,
+  getRenterRefundCanonicalPath
 } = require('../pathUtils');
 
 test('MN M1MA path regression: default path points to TaxEngine marriage credit JSON', () => {
@@ -20,6 +22,13 @@ test('MN M1PR path regression: default paths point to both TaxEngine homeowner r
 
   assert.equal(paths.M1PR_ROW, getHomeownerRefundRowCanonicalPath(2025));
   assert.equal(paths.M1PR_REFUND, getHomeownerRefundCanonicalPath(2025));
+});
+
+test('MN M1RENT path regression: default paths point to the renter TaxEngine refund JSON files', () => {
+  const paths = buildDefaultPaths('MN', 2025, 'm1rent');
+
+  assert.equal(paths.M1PR_ROW, getRenterRefundRowCanonicalPath(2025));
+  assert.equal(paths.M1PR_REFUND, getRenterRefundCanonicalPath(2025));
 });
 
 test('MN M1MA path regression: malformed saved TaxEngine path is normalized before replace', () => {
