@@ -72,6 +72,15 @@ npm start
 npm run build
 ```
 
+This generates a Windows NSIS installer in `dist/` named like `State-Tax-Table-Updater-Setup-2.0.0.exe`.
+
+## Share With Team
+
+1. Run `npm install` once on the build machine.
+2. Run `npm run build`.
+3. Share the generated installer from `dist/`.
+4. Teammates can install `State Tax Table Updater` without needing Node.js or the source repo.
+
 ## Typical Workflow
 
 1. Start the app.
