@@ -17,11 +17,12 @@
     },
     "files": [
       "main.js",
+      "pathUtils.js",
       "preload.js",
       "renderer.js",
       "index.html",
       "styles.css",
-      "states/**",
+      "States/**",
       "assets/**"
     ],
     "nsis": {
