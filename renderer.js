@@ -3,6 +3,7 @@ const STANDARD_WORKFLOW_KEY = 'standard';
 const MARRIAGE_CREDIT_WORKFLOW_KEY = 'm1ma';
 const HOMEOWNER_REFUND_WORKFLOW_KEY = 'm1pr';
 const RENTER_REFUND_WORKFLOW_KEY = 'm1rent';
+const CO_FAMILY_AFFORDABILITY_WORKFLOW_KEY = 'family-affordability';
 const MARRIAGE_CREDIT_FILE_TARGET = {
   key: 'M1MA',
   label: 'Marriage Credit',
@@ -15,6 +16,23 @@ const HOMEOWNER_REFUND_FILE_TARGETS = [
 const RENTER_REFUND_FILE_TARGETS = [
   { key: 'M1PR_ROW', label: 'Renter Refund Row Table', fileLabel: 'M1RENT Row' },
   { key: 'M1PR_REFUND', label: 'Renter Refund Table', fileLabel: 'M1RENT Refund' }
+];
+const CO_FAMILY_AFFORDABILITY_FILE_TARGETS = [
+  { key: 'CO_FAMILY_UNDER5', label: 'Age 5 and Under Family Affordability Tax Credit Table', fileLabel: 'Under Age 5' },
+  { key: 'CO_FAMILY_AGE6TO16', label: 'Age 6 to 16 Family Affordability Tax Credit Table', fileLabel: 'Age 6 to 16' }
+];
+const CO_FAMILY_STATUS_ORDER = [
+  'FilingStatus.Single',
+  'FilingStatus.MarriedFilingJointly',
+  'FilingStatus.MarriedFilingSeparately',
+  'FilingStatus.HeadOfHousehold',
+  'FilingStatus.QualifyingWidow'
+];
+const CO_FAMILY_NON_JOINT_STATUSES = [
+  'FilingStatus.Single',
+  'FilingStatus.MarriedFilingSeparately',
+  'FilingStatus.HeadOfHousehold',
+  'FilingStatus.QualifyingWidow'
 ];
 
 let appState = {
@@ -29,6 +47,14 @@ let appState = {
   diffResults: null,
   marriageCreditReview: null,
   homeownerRefundReview: null,
+  coFamilyAffordabilityReview: null,
+  coFamilyAffordabilityUi: {
+    activeTab: 'under5',
+    statusFilters: {
+      under5: 'all',
+      age6to16: 'all'
+    }
+  },
   homeownerRefundUi: {
     activeTab: 'rowTable',
     statusFilters: {
@@ -66,6 +92,14 @@ function resetExtractedState() {
   appState.diffResults = null;
   appState.marriageCreditReview = null;
   appState.homeownerRefundReview = null;
+  appState.coFamilyAffordabilityReview = null;
+  appState.coFamilyAffordabilityUi = {
+    activeTab: 'under5',
+    statusFilters: {
+      under5: 'all',
+      age6to16: 'all'
+    }
+  };
   appState.homeownerRefundUi = {
     activeTab: 'rowTable',
     statusFilters: {
@@ -84,6 +118,11 @@ function getWorkflowOptions() {
       { key: RENTER_REFUND_WORKFLOW_KEY, label: "SchM1RENT Renter's Credit", hint: 'Extract the renter row-table and refund-table grids, review both, then replace two JSON files.' }
     ];
   }
+  if (appState.selectedStateConfig?.code === 'CO') {
+    return [
+      { key: CO_FAMILY_AFFORDABILITY_WORKFLOW_KEY, label: 'Family Affordability Tax Credit', hint: 'Extract the two Colorado per-child credit tables, review both full grids, then replace both JSON files.' }
+    ];
+  }
   return [{ key: STANDARD_WORKFLOW_KEY, label: 'Standard Tax Tables', hint: 'Built-in PDF extraction for the configured tax tables.' }];
 }
 
@@ -99,10 +138,15 @@ function isRenterRefundWorkflow() {
   return appState.selectedStateConfig?.code === 'MN' && appState.selectedWorkflowKey === RENTER_REFUND_WORKFLOW_KEY;
 }
 
+function isCoFamilyAffordabilityWorkflow() {
+  return appState.selectedStateConfig?.code === 'CO' && appState.selectedWorkflowKey === CO_FAMILY_AFFORDABILITY_WORKFLOW_KEY;
+}
+
 function getWorkflowStorageKey() {
   if (isMarriageCreditWorkflow()) return MARRIAGE_CREDIT_WORKFLOW_KEY;
   if (isHomeownerRefundWorkflow()) return HOMEOWNER_REFUND_WORKFLOW_KEY;
   if (isRenterRefundWorkflow()) return RENTER_REFUND_WORKFLOW_KEY;
+  if (isCoFamilyAffordabilityWorkflow()) return CO_FAMILY_AFFORDABILITY_WORKFLOW_KEY;
   return STANDARD_WORKFLOW_KEY;
 }
 
@@ -110,6 +154,7 @@ function getActiveFileTargets() {
   if (isMarriageCreditWorkflow()) return [MARRIAGE_CREDIT_FILE_TARGET];
   if (isHomeownerRefundWorkflow()) return HOMEOWNER_REFUND_FILE_TARGETS;
   if (isRenterRefundWorkflow()) return RENTER_REFUND_FILE_TARGETS;
+  if (isCoFamilyAffordabilityWorkflow()) return CO_FAMILY_AFFORDABILITY_FILE_TARGETS;
   return appState.selectedStateConfig?.filingStatuses || [];
 }
 
@@ -122,7 +167,7 @@ function renderWorkflowPicker() {
     group.style.display = 'none';
     select.innerHTML = '';
     hint.textContent = '';
-    appState.selectedWorkflowKey = STANDARD_WORKFLOW_KEY;
+    appState.selectedWorkflowKey = options[0]?.key || STANDARD_WORKFLOW_KEY;
     return;
   }
   group.style.display = 'flex';
@@ -137,56 +182,72 @@ function renderWorkflowText() {
       ? 'Select the Minnesota M1PR instruction PDF and the page range that contains the Homestead Credit Refund Table.'
       : isRenterRefundWorkflow()
         ? 'Select the Minnesota M1 instruction PDF and the page range that contains the renter credit refund tables.'
-        : 'Select an instruction PDF for the selected state and year.';
+        : isCoFamilyAffordabilityWorkflow()
+          ? 'Select the Colorado DR 0104CN instruction PDF and the page range that contains the Age 5 and Under and Age 6 to 16 credit tables.'
+          : 'Select an instruction PDF for the selected state and year.';
   document.getElementById('uploadHint').textContent = isMarriageCreditWorkflow()
     ? 'PDF only - use the page range that contains the marriage-credit table'
     : isHomeownerRefundWorkflow()
       ? 'PDF only - use the page range that contains the Homestead Credit Refund Table'
       : isRenterRefundWorkflow()
         ? 'PDF only - use the page range that contains the renter credit refund tables'
-        : 'PDF only - enter the start and end tax-table pages manually';
+        : isCoFamilyAffordabilityWorkflow()
+          ? 'PDF only - use the page range that contains both Colorado Family Affordability credit tables'
+          : 'PDF only - enter the start and end tax-table pages manually';
   document.getElementById('pageRangeHint').textContent = isMarriageCreditWorkflow()
     ? 'Enter the exact PDF pages that contain the Schedule M1MA marriage-credit table before extracting.'
     : isHomeownerRefundWorkflow()
       ? 'Enter the exact PDF pages that contain the Homestead Credit Refund Table before extracting.'
       : isRenterRefundWorkflow()
         ? 'Enter the exact PDF pages that contain the renter credit refund tables before extracting.'
-        : 'Enter the exact tax-table pages from the selected PDF before running extraction.';
+        : isCoFamilyAffordabilityWorkflow()
+          ? 'Enter the exact PDF pages that contain both Colorado Family Affordability tables before extracting.'
+          : 'Enter the exact tax-table pages from the selected PDF before running extraction.';
   document.getElementById('extractSectionTitle').textContent = isMarriageCreditWorkflow()
     ? 'Extract Marriage Credit Table'
     : isHomeownerRefundWorkflow()
       ? 'Extract Homeowner Refund Tables'
       : isRenterRefundWorkflow()
         ? 'Extract Renter Refund Tables'
-        : 'Extract Data';
+        : isCoFamilyAffordabilityWorkflow()
+          ? 'Extract Family Affordability Tables'
+          : 'Extract Data';
   document.getElementById('extractSectionSubtitle').textContent = isMarriageCreditWorkflow()
     ? 'The built-in parser reads the M1MA table and prepares a full two-key preview for review.'
     : isHomeownerRefundWorkflow()
       ? 'The built-in parser reads the M1PR Homestead Credit Refund Table and prepares both review tables.'
       : isRenterRefundWorkflow()
         ? 'The built-in parser reads the M1RENT renter-credit tables and prepares both review tables.'
-        : 'The built-in parser reads the selected PDF pages and extracts all income brackets.';
+        : isCoFamilyAffordabilityWorkflow()
+          ? 'The built-in parser reads both Colorado credit tables and prepares full review grids for each one.'
+          : 'The built-in parser reads the selected PDF pages and extracts all income brackets.';
   document.getElementById('updateSectionTitle').textContent = isMarriageCreditWorkflow()
     ? 'Replace Marriage Credit JSON'
     : isHomeownerRefundWorkflow()
       ? 'Replace Homeowner Refund JSON'
       : isRenterRefundWorkflow()
         ? 'Replace Renter Refund JSON'
-        : 'Update JSON Files';
+        : isCoFamilyAffordabilityWorkflow()
+          ? 'Replace Family Affordability JSON'
+          : 'Update JSON Files';
   document.getElementById('updateSectionSubtitle').textContent = isMarriageCreditWorkflow()
     ? 'Writes a full replacement MNMarriageCredit table after you review the extracted grid.'
     : isHomeownerRefundWorkflow()
       ? 'Writes full replacement M1PR row and refund tables after you review both extracted grids.'
       : isRenterRefundWorkflow()
         ? 'Writes full replacement M1PR renter row and refund tables after you review both extracted grids.'
-        : 'Writes new values to all filing status files. Review the diff above before proceeding.';
+        : isCoFamilyAffordabilityWorkflow()
+          ? 'Writes full replacement Colorado Family Affordability tables after you review both extracted grids.'
+          : 'Writes new values to all filing status files. Review the diff above before proceeding.';
   document.getElementById('updateJsonBtn').textContent = isMarriageCreditWorkflow()
     ? 'Replace Marriage Credit JSON'
     : isHomeownerRefundWorkflow()
       ? 'Replace Homeowner Refund JSON'
       : isRenterRefundWorkflow()
         ? 'Replace Renter Refund JSON'
-        : 'Update JSON Files';
+        : isCoFamilyAffordabilityWorkflow()
+          ? 'Replace Family Affordability JSON'
+          : 'Update JSON Files';
 }
 
 async function onStateChange(stateCode) {
@@ -267,6 +328,7 @@ function getWorkflowPageRangeLabel() {
   if (isMarriageCreditWorkflow()) return 'Schedule M1MA pages';
   if (isHomeownerRefundWorkflow()) return 'M1PR refund-table pages';
   if (isRenterRefundWorkflow()) return 'M1RENT refund-table pages';
+  if (isCoFamilyAffordabilityWorkflow()) return 'Family Affordability table pages';
   return 'Tax table pages';
 }
 
@@ -274,6 +336,7 @@ function getPendingWorkflowPageRangeLabel() {
   if (isMarriageCreditWorkflow()) return 'Enter the Schedule M1MA table page range';
   if (isHomeownerRefundWorkflow()) return 'Enter the M1PR refund-table page range';
   if (isRenterRefundWorkflow()) return 'Enter the M1RENT refund-table page range';
+  if (isCoFamilyAffordabilityWorkflow()) return 'Enter the Colorado Family Affordability table page range';
   return `Enter required PDF start/end pages for tax year ${appState.taxYear}`;
 }
 
@@ -406,6 +469,154 @@ function parseOrPdfRows(textItems, pageWidth) {
     parsed.push({ income, upperIncome, values: { S: sValue, J: jValue } });
   }
   return parsed;
+}
+function getCoFamilyStatusSortIndex(status) {
+  const index = CO_FAMILY_STATUS_ORDER.indexOf(status);
+  return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+}
+
+function sortCoFamilyRows(rows) {
+  return [...rows].sort((a, b) => getCoFamilyStatusSortIndex(a.filingStatus) - getCoFamilyStatusSortIndex(b.filingStatus) || a.amount - b.amount || a.value - b.value);
+}
+
+function buildCoFamilyRowKey(row) {
+  return `${row.filingStatus}|${row.amount}`;
+}
+
+function parseCurrencyAmountFromText(str) {
+  if (typeof str !== 'string') return null;
+  const numbers = Array.from(str.matchAll(/\$?\s*(\d[\d,]*)/g)).map(match => Number(match[1].replace(/,/g, '')));
+  if (numbers.length === 0) return null;
+  return numbers[numbers.length - 1];
+}
+
+function parseCoFamilyAffordabilityPageRows(textItems, options) {
+  const rows = groupPdfTextItemsByRow(textItems.map(item => ({ str: 'str' in item ? item.str : '', x: item.transform?.[4], y: item.transform?.[5] })));
+  const titleIndex = rows.findIndex(row => getRowText(row).toLowerCase().includes(options.title.toLowerCase()));
+  if (titleIndex === -1) {
+    return [];
+  }
+
+  const parsedRows = [];
+  for (let index = titleIndex + 1; index < rows.length; index++) {
+    const row = rows[index];
+    const rowText = getRowText(row);
+    if (/^Line\s+\d+/i.test(rowText) && parsedRows.length > 0) break;
+
+    const leftText = row.items.filter(item => item.x < 230).map(item => item.str).join(' ').replace(/\s+/g, ' ').trim();
+    const jointText = row.items.filter(item => item.x >= 230 && item.x < 430).map(item => item.str).join(' ').replace(/\s+/g, ' ').trim();
+    // Ignore the right-margin page line numbers that sit beyond the actual credit-value column.
+    const valueText = row.items.filter(item => item.x >= 430 && item.x < 540).map(item => item.str).join(' ').replace(/\s+/g, ' ').trim();
+
+    if (!leftText || !jointText || !valueText) continue;
+    const value = parseCurrencyAmountFromText(valueText);
+    const nonJointUpper = parseCurrencyAmountFromText(leftText);
+    const jointUpper = parseCurrencyAmountFromText(jointText);
+    if (!Number.isFinite(value) || !Number.isFinite(nonJointUpper) || !Number.isFinite(jointUpper)) continue;
+    if (/or more/i.test(leftText) || /or more/i.test(jointText) || value === 0) continue;
+
+    for (const filingStatus of CO_FAMILY_NON_JOINT_STATUSES) {
+      parsedRows.push({ filingStatus, amount: nonJointUpper, value, source: options.source || 'pdf' });
+    }
+    parsedRows.push({ filingStatus: 'FilingStatus.MarriedFilingJointly', amount: jointUpper, value, source: options.source || 'pdf' });
+  }
+
+  if (parsedRows.length === 0) {
+    throw new Error(`Could not parse any rows for the ${options.title} table.`);
+  }
+
+  const expectedRowCount = 15 * CO_FAMILY_STATUS_ORDER.length;
+  if (parsedRows.length !== expectedRowCount) {
+    throw new Error(`Expected ${expectedRowCount} rows for the ${options.title} table, found ${parsedRows.length}.`);
+  }
+
+  return sortCoFamilyRows(parsedRows);
+}
+
+function buildCoFamilyReview(extractedRows, currentTableResult = null) {
+  const normalizedExtractedRows = sortCoFamilyRows(extractedRows.map(row => ({
+    filingStatus: row.filingStatus,
+    amount: Number(row.amount),
+    value: Number(row.value),
+    source: row.source || 'pdf'
+  })));
+  const currentRows = currentTableResult?.success ? sortCoFamilyRows(currentTableResult.rows.map(row => ({
+    filingStatus: row.filingStatus,
+    amount: Number(row.amount),
+    value: Number(row.value)
+  }))) : [];
+  const currentByKey = new Map(currentRows.map(row => [buildCoFamilyRowKey(row), row]));
+  let changedCount = 0;
+  let unchangedCount = 0;
+  let newCount = 0;
+
+  const reviewRows = normalizedExtractedRows.map(row => {
+    const current = currentByKey.get(buildCoFamilyRowKey(row));
+    let reviewStatus = 'new';
+    if (current) {
+      if (Number(current.value) === Number(row.value)) { reviewStatus = 'match'; unchangedCount++; }
+      else { reviewStatus = 'changed'; changedCount++; }
+    } else newCount++;
+    return { ...row, currentValue: current ? Number(current.value) : null, reviewStatus };
+  });
+
+  const combinedKeys = new Set(reviewRows.map(buildCoFamilyRowKey));
+  const missingCount = currentRows.filter(row => !combinedKeys.has(buildCoFamilyRowKey(row))).length;
+
+  return {
+    rows: reviewRows,
+    extractedCount: normalizedExtractedRows.length,
+    currentCount: currentRows.length,
+    changedCount,
+    unchangedCount,
+    newCount,
+    missingCount,
+    currentYear: currentTableResult?.year || null
+  };
+}
+
+function getCoFamilyReviewRows(review, statusFilter) {
+  if (!review?.rows) return [];
+  if (!statusFilter || statusFilter === 'all') return review.rows;
+  return review.rows.filter(row => row.reviewStatus === statusFilter);
+}
+
+function ensureCoFamilyUiState() {
+  if (appState.coFamilyAffordabilityUi) return;
+  appState.coFamilyAffordabilityUi = {
+    activeTab: 'under5',
+    statusFilters: {
+      under5: 'all',
+      age6to16: 'all'
+    }
+  };
+}
+
+function showCoFamilyReviewTab(tabKey) {
+  ensureCoFamilyUiState();
+  appState.coFamilyAffordabilityUi.activeTab = tabKey;
+  renderMarriageCreditSection();
+}
+
+function getCoFamilyReviewStatusLabel(row) {
+  if (row.reviewStatus === 'changed') return 'Changed';
+  if (row.reviewStatus === 'match') return 'Match';
+  return 'New';
+}
+
+function getCoFamilyReviewStatusClass(row) {
+  if (row.reviewStatus === 'changed') return 'badge-changed';
+  if (row.reviewStatus === 'match') return 'badge-ok';
+  return 'badge-accent';
+}
+
+function renderCoFamilyReviewTable(review, options) {
+  ensureCoFamilyUiState();
+  const activeFilter = appState.coFamilyAffordabilityUi.statusFilters[options.filterKey] || 'all';
+  const filteredRows = getCoFamilyReviewRows(review, activeFilter);
+  const rowsHtml = filteredRows.map((row, index) => `<tr><td>${index + 1}</td><td>${row.filingStatus}</td><td>${row.amount.toLocaleString()}</td><td>${row.value.toLocaleString()}</td><td><span class="diff-badge ${getCoFamilyReviewStatusClass(row)}">${getCoFamilyReviewStatusLabel(row)}</span></td></tr>`).join('');
+  const emptyHtml = `<div class="diff-empty">No rows match the current status filter.</div>`;
+  return `<div class="content-section"><div class="section-header"><div><h2 class="section-title">${options.title}</h2><p class="section-subtitle">${options.subtitle}</p></div><div class="review-toolbar">${renderGenericStatusFilter(options.filterKey, activeFilter)}</div></div><div class="diff-summary"><div class="diff-stat"><span class="diff-stat-value">${filteredRows.length}</span><span class="diff-stat-label">Visible rows</span></div><div class="diff-stat"><span class="diff-stat-value">${review.rows.length}</span><span class="diff-stat-label">Preview rows</span></div><div class="diff-stat"><span class="diff-stat-value ok">${review.extractedCount}</span><span class="diff-stat-label">Extracted from PDF</span></div><div class="diff-stat"><span class="diff-stat-value ${review.changedCount > 0 ? 'changed' : 'ok'}">${review.changedCount}</span><span class="diff-stat-label">Changed vs file</span></div><div class="diff-stat"><span class="diff-stat-value ok">${review.unchangedCount}</span><span class="diff-stat-label">Unchanged vs file</span></div><div class="diff-stat"><span class="diff-stat-value ${review.missingCount > 0 ? 'warn' : 'ok'}">${review.missingCount}</span><span class="diff-stat-label">Still missing</span></div>${review.currentYear ? `<div class="diff-stat"><span class="diff-stat-value">${review.currentYear} -> ${appState.taxYear}</span><span class="diff-stat-label">Year update</span></div>` : ''}</div>${filteredRows.length === 0 ? emptyHtml : `<div class="diff-table-wrapper marriage-credit-table-wrapper"><table class="diff-table marriage-credit-table"><thead><tr><th>#</th><th>FilingStatus</th><th>USAmount</th><th>Value</th><th>Status</th></tr></thead><tbody>${rowsHtml}</tbody></table></div>`}</div>`;
 }
 function getRowText(row) {
   return row.items.map(item => item.str).join(' ').replace(/\s+/g, ' ').trim();
@@ -910,6 +1121,31 @@ async function extractRenterRefundFromPdf(filePath, pageRange) {
   });
 }
 
+async function extractCoFamilyAffordabilityFromPdf(filePath, pageRange) {
+  const fileResult = await window.api.readBinaryFileAsBase64(filePath);
+  if (!fileResult.success) throw new Error(fileResult.message || 'Failed to read selected PDF.');
+  const pdfjsLib = await getPdfJsLib();
+  const pdf = await pdfjsLib.getDocument({ data: base64ToUint8Array(fileResult.base64) }).promise;
+  let under5Rows = [];
+  let age6to16Rows = [];
+
+  for (let pageNo = pageRange.start; pageNo <= pageRange.end; pageNo++) {
+    if (pageNo < 1 || pageNo > pdf.numPages) throw new Error(`Configured PDF page ${pageNo} is outside the document range (1-${pdf.numPages}).`);
+    updateProgress(20 + Math.floor(((pageNo - pageRange.start) / Math.max(1, pageRange.end - pageRange.start + 1)) * 55), `Parsing Colorado Family Affordability page ${pageNo}...`);
+    const page = await pdf.getPage(pageNo);
+    const textContent = await page.getTextContent();
+    under5Rows = under5Rows.concat(parseCoFamilyAffordabilityPageRows(textContent.items, { title: 'Age 5 and Under Family Affordability Tax Credit Table' }));
+    age6to16Rows = age6to16Rows.concat(parseCoFamilyAffordabilityPageRows(textContent.items, { title: 'Age 6 to 16 Family Affordability Tax Credit Table' }));
+  }
+
+  if (under5Rows.length === 0) throw new Error('Deterministic parser found no Age 5 and Under Family Affordability rows in the selected page range.');
+  if (age6to16Rows.length === 0) throw new Error('Deterministic parser found no Age 6 to 16 Family Affordability rows in the selected page range.');
+
+  return {
+    under5Rows: sortCoFamilyRows(under5Rows),
+    age6to16Rows: sortCoFamilyRows(age6to16Rows)
+  };
+}
 async function extractPdfDeterministically(filePath, pageRange, config, lookUpTypes) {
   const fileResult = await window.api.readBinaryFileAsBase64(filePath);
   if (!fileResult.success) throw new Error(fileResult.message || 'Failed to read selected PDF.');
@@ -1064,6 +1300,30 @@ async function extractData() {
         rowTable: buildGenericTableReview(extractedTables.rowTableRows, currentRowTable && currentRowTable.success ? currentRowTable : null),
         refundTable: buildGenericTableReview(overlayGenericTableRows(currentRefundRows, extractedTables.refundRows), currentRefundTable && currentRefundTable.success ? currentRefundTable : null, { extractedCountOverride: extractedTables.refundRows.length })
       };
+      appState.marriageCreditReview = null;
+      appState.extractedData = null;
+      appState.diffResults = null;
+      renderExtractedDataSection();
+      renderDiffSection();
+      renderMarriageCreditSection();
+      updateActionButtons();
+      updateProgress(100, 'Complete!');
+      return setTimeout(() => setExtracting(false), 800);
+    }
+
+    if (isCoFamilyAffordabilityWorkflow()) {
+      updateProgress(10, 'Reading current Colorado Family Affordability JSON files...');
+      const under5Path = appState.filePaths.CO_FAMILY_UNDER5;
+      const age6to16Path = appState.filePaths.CO_FAMILY_AGE6TO16;
+      const currentUnder5 = under5Path ? await window.api.readCoFamilyAffordabilityTable(under5Path) : null;
+      const currentAge6to16 = age6to16Path ? await window.api.readCoFamilyAffordabilityTable(age6to16Path) : null;
+      updateProgress(20, 'Parsing Colorado Family Affordability tables...');
+      const extractedTables = await extractCoFamilyAffordabilityFromPdf(appState.selectedPdfPath, pageRange);
+      appState.coFamilyAffordabilityReview = {
+        under5: buildCoFamilyReview(extractedTables.under5Rows, currentUnder5 && currentUnder5.success ? currentUnder5 : null),
+        age6to16: buildCoFamilyReview(extractedTables.age6to16Rows, currentAge6to16 && currentAge6to16.success ? currentAge6to16 : null)
+      };
+      appState.homeownerRefundReview = null;
       appState.marriageCreditReview = null;
       appState.extractedData = null;
       appState.diffResults = null;
@@ -1256,6 +1516,28 @@ function renderMarriageCreditSection() {
     return;
   }
 
+  if (isCoFamilyAffordabilityWorkflow()) {
+    const review = appState.coFamilyAffordabilityReview;
+    if (!review?.under5 || !review?.age6to16) { container.style.display = 'none'; container.innerHTML = ''; return; }
+    ensureCoFamilyUiState();
+    const tabs = [
+      { key: 'under5', label: 'Under Age 5', badge: review.under5.changedCount },
+      { key: 'age6to16', label: 'Age 6 to 16', badge: review.age6to16.changedCount }
+    ];
+    const tabsHtml = tabs.map(tab => `<button class="diff-tab co-family-tab ${appState.coFamilyAffordabilityUi.activeTab === tab.key ? 'active' : ''}" data-co-family-tab="${tab.key}">${tab.label}<span class="diff-badge ${tab.badge > 0 ? 'badge-changed' : 'badge-ok'}">${tab.badge}</span></button>`).join('');
+    const under5PanelHtml = `<div class="diff-panel co-family-panel ${appState.coFamilyAffordabilityUi.activeTab === 'under5' ? 'active' : ''}" id="co-family-panel-under5">${renderCoFamilyReviewTable(review.under5, { title: 'Review Age 5 and Under Family Affordability Table', subtitle: 'Full extracted grid for the Colorado Age 5 and Under per-child credit table. QualifyingWidow is populated with the Single / HOH / MFS column values for review before replace.', filterKey: 'under5' })}</div>`;
+    const age6to16PanelHtml = `<div class="diff-panel co-family-panel ${appState.coFamilyAffordabilityUi.activeTab === 'age6to16' ? 'active' : ''}" id="co-family-panel-age6to16">${renderCoFamilyReviewTable(review.age6to16, { title: 'Review Age 6 to 16 Family Affordability Table', subtitle: 'Full extracted grid for the Colorado Age 6 to 16 per-child credit table. QualifyingWidow is populated with the Single / HOH / MFS column values for review before replace.', filterKey: 'age6to16' })}</div>`;
+    container.style.display = 'block';
+    container.innerHTML = `<div class="section-header"><h2 class="section-title">Review Colorado Family Affordability Tables</h2><p class="section-subtitle">Switch between the two Colorado credit tables, then use the status filter to jump to changed rows quickly.</p></div><div class="diff-tabs co-family-tabs">${tabsHtml}</div><div class="diff-panels co-family-panels">${under5PanelHtml}${age6to16PanelHtml}</div>`;
+    container.querySelectorAll('.co-family-tab').forEach(tab => tab.addEventListener('click', () => showCoFamilyReviewTab(tab.dataset.coFamilyTab)));
+    container.querySelectorAll('.homeowner-refund-status-filter').forEach(select => select.addEventListener('change', event => {
+      ensureCoFamilyUiState();
+      appState.coFamilyAffordabilityUi.statusFilters[event.target.dataset.filterKey] = event.target.value;
+      renderMarriageCreditSection();
+    }));
+    return;
+  }
+
   const review = appState.marriageCreditReview;
   if (!isMarriageCreditWorkflow() || !review) { container.style.display = 'none'; container.innerHTML = ''; return; }
   const warningHtml = review.warnings.map(message => `<div class="review-alert warn">${message}</div>`).join('');
@@ -1266,6 +1548,7 @@ function renderMarriageCreditSection() {
 async function updateJsonFiles() {
   if (isMarriageCreditWorkflow()) return replaceMarriageCreditJson();
   if (isHomeownerRefundWorkflow() || isRenterRefundWorkflow()) return replaceRefundJson();
+  if (isCoFamilyAffordabilityWorkflow()) return replaceCoFamilyAffordabilityJson();
   const config = appState.selectedStateConfig;
   if (!config.filingStatuses.every(s => appState.filePaths[s.key])) return showToast('Please select all JSON file paths before updating.', 'error');
   setUpdating(true);
@@ -1276,6 +1559,38 @@ async function updateJsonFiles() {
 ${results.filter(r => !r.success).map(f => `${f.statusKey}: ${f.message}`).join('\n')}`, 'error');
 }
 
+async function replaceCoFamilyAffordabilityJson() {
+  const review = appState.coFamilyAffordabilityReview;
+  const under5Path = appState.filePaths.CO_FAMILY_UNDER5;
+  const age6to16Path = appState.filePaths.CO_FAMILY_AGE6TO16;
+  if (!under5Path || !age6to16Path) return showToast('Please configure both Colorado Family Affordability JSON paths before replacing.', 'error');
+  if (!review?.under5?.rows?.length || !review?.age6to16?.rows?.length) return showToast('Please extract and review both Colorado Family Affordability tables first.', 'error');
+
+  setUpdating(true);
+  const [under5Result, age6to16Result] = await Promise.all([
+    window.api.replaceCoFamilyAffordabilityTable({ filePath: under5Path, taxYear: appState.taxYear, rows: review.under5.rows.map(row => ({ filingStatus: row.filingStatus, amount: row.amount, value: row.value })) }),
+    window.api.replaceCoFamilyAffordabilityTable({ filePath: age6to16Path, taxYear: appState.taxYear, rows: review.age6to16.rows.map(row => ({ filingStatus: row.filingStatus, amount: row.amount, value: row.value })) })
+  ]);
+  setUpdating(false);
+
+  if (!under5Result.success || !age6to16Result.success) {
+    const errorMessage = [under5Result, age6to16Result].filter(result => !result.success).map(result => result.message).join('\n');
+    return showToast('Colorado Family Affordability replace failed:\n' + errorMessage, 'error');
+  }
+
+  const [refreshedUnder5, refreshedAge6to16] = await Promise.all([
+    window.api.readCoFamilyAffordabilityTable(under5Path),
+    window.api.readCoFamilyAffordabilityTable(age6to16Path)
+  ]);
+
+  appState.coFamilyAffordabilityReview = {
+    under5: buildCoFamilyReview(review.under5.rows, refreshedUnder5.success ? refreshedUnder5 : null),
+    age6to16: buildCoFamilyReview(review.age6to16.rows, refreshedAge6to16.success ? refreshedAge6to16 : null)
+  };
+  renderMarriageCreditSection();
+  updateActionButtons();
+  showToast('Colorado Family Affordability JSON replaced with ' + (under5Result.updatedCount + age6to16Result.updatedCount) + ' rows across both files.', 'success');
+}
 async function replaceMarriageCreditJson() {
   const filePath = appState.filePaths[getActiveFileTargets()[0].key];
   const review = appState.marriageCreditReview;
@@ -1291,6 +1606,7 @@ async function replaceMarriageCreditJson() {
   updateActionButtons();
   showToast(`Marriage credit JSON replaced with ${result.updatedCount} rows.`, 'success');
 }
+
 
 async function replaceRefundJson() {
   const review = appState.homeownerRefundReview;
@@ -1328,6 +1644,16 @@ async function replaceRefundJson() {
 
 function renderExtractedDataSection() {
   const section = document.getElementById('extractedDataSection');
+  if (isCoFamilyAffordabilityWorkflow()) {
+    if (!appState.coFamilyAffordabilityReview?.under5 || !appState.coFamilyAffordabilityReview?.age6to16) { section.style.display = 'none'; return; }
+    const under5Review = appState.coFamilyAffordabilityReview.under5;
+    const age6to16Review = appState.coFamilyAffordabilityReview.age6to16;
+    const combinedRows = [...under5Review.rows, ...age6to16Review.rows];
+    const maxValue = Math.max(...combinedRows.map(row => row.value));
+    section.style.display = 'block';
+    document.getElementById('extractionSummary').innerHTML = `<div class="extraction-stat"><span>${under5Review.rows.length}</span><label>Under 5 rows</label></div><div class="extraction-stat"><span>${age6to16Review.rows.length}</span><label>Age 6 to 16 rows</label></div><div class="extraction-stat"><span>${CO_FAMILY_STATUS_ORDER.length}</span><label>Filing statuses</label></div><div class="extraction-stat"><span>${maxValue.toLocaleString()}</span><label>Max credit</label></div>`;
+    return;
+  }
   if (isMarriageCreditWorkflow()) {
     if (!appState.marriageCreditReview) { section.style.display = 'none'; return; }
     const review = appState.marriageCreditReview;
@@ -1356,11 +1682,12 @@ function renderExtractedDataSection() {
   document.getElementById('extractionSummary').innerHTML = `<div class="extraction-stat"><span>${totalEntries}</span><label>Income brackets</label></div><div class="extraction-stat"><span>${appState.selectedStateConfig.filingStatuses.length}</span><label>Filing statuses</label></div><div class="extraction-stat"><span>$${maxIncome.toLocaleString()}</span><label>Max income</label></div><div class="extraction-stat"><span>${appState.taxYear}</span><label>Tax year</label></div>`;
 }
 
+
 function setExtracting(active) {
   document.getElementById('extractBtn').disabled = active;
   document.getElementById('extractBtn').textContent = active
-    ? (isMarriageCreditWorkflow() ? 'Extracting Marriage Credit...' : isHomeownerRefundWorkflow() ? 'Extracting Homeowner Refund...' : isRenterRefundWorkflow() ? 'Extracting Renter Refund...' : 'Extracting...')
-    : (isMarriageCreditWorkflow() ? 'Extract Marriage Credit Table' : isHomeownerRefundWorkflow() ? 'Extract Homeowner Refund Tables' : isRenterRefundWorkflow() ? 'Extract Renter Refund Tables' : 'Extract Data from PDF');
+    ? (isMarriageCreditWorkflow() ? 'Extracting Marriage Credit...' : isHomeownerRefundWorkflow() ? 'Extracting Homeowner Refund...' : isRenterRefundWorkflow() ? 'Extracting Renter Refund...' : isCoFamilyAffordabilityWorkflow() ? 'Extracting Family Affordability...' : 'Extracting...')
+    : (isMarriageCreditWorkflow() ? 'Extract Marriage Credit Table' : isHomeownerRefundWorkflow() ? 'Extract Homeowner Refund Tables' : isRenterRefundWorkflow() ? 'Extract Renter Refund Tables' : isCoFamilyAffordabilityWorkflow() ? 'Extract Family Affordability Tables' : 'Extract Data from PDF');
   document.getElementById('extractionProgress').style.display = active ? 'block' : 'none';
   if (!active) updateProgress(0, '');
 }
@@ -1368,8 +1695,8 @@ function setExtracting(active) {
 function setUpdating(active) {
   document.getElementById('updateJsonBtn').disabled = active;
   document.getElementById('updateJsonBtn').textContent = active
-    ? (isMarriageCreditWorkflow() || isHomeownerRefundWorkflow() || isRenterRefundWorkflow() ? 'Replacing...' : 'Updating...')
-    : (isMarriageCreditWorkflow() ? 'Replace Marriage Credit JSON' : isHomeownerRefundWorkflow() ? 'Replace Homeowner Refund JSON' : isRenterRefundWorkflow() ? 'Replace Renter Refund JSON' : 'Update JSON Files');
+    ? (isMarriageCreditWorkflow() || isHomeownerRefundWorkflow() || isRenterRefundWorkflow() || isCoFamilyAffordabilityWorkflow() ? 'Replacing...' : 'Updating...')
+    : (isMarriageCreditWorkflow() ? 'Replace Marriage Credit JSON' : isHomeownerRefundWorkflow() ? 'Replace Homeowner Refund JSON' : isRenterRefundWorkflow() ? 'Replace Renter Refund JSON' : isCoFamilyAffordabilityWorkflow() ? 'Replace Family Affordability JSON' : 'Update JSON Files');
 }
 
 function updateProgress(pct, msg) {
@@ -1384,7 +1711,9 @@ function updateActionButtons() {
     ? Boolean(appState.marriageCreditReview?.rows?.length)
     : (isHomeownerRefundWorkflow() || isRenterRefundWorkflow())
       ? Boolean(appState.homeownerRefundReview?.rowTable?.rows?.length && appState.homeownerRefundReview?.refundTable?.rows?.length)
-      : Boolean(appState.extractedData);
+      : isCoFamilyAffordabilityWorkflow()
+        ? Boolean(appState.coFamilyAffordabilityReview?.under5?.rows?.length && appState.coFamilyAffordabilityReview?.age6to16?.rows?.length)
+        : Boolean(appState.extractedData);
   document.getElementById('extractBtn').disabled = !hasSource;
   document.getElementById('updateJsonBtn').disabled = !(hasExtracted && allPathsSet);
 }
@@ -1418,8 +1747,12 @@ function bindEvents() {
   document.getElementById('updateJsonBtn').addEventListener('click', updateJsonFiles);
 }
 
-if (typeof module !== 'undefined' && module.exports) module.exports = { appState, parseIntegerText, groupPdfTextItemsByRow, findNumericItemsInRange, findMinnesotaValueWindow, parseMinnesotaPdfRows, parseMarriageCreditPdfRows, parseMarriageCreditFromFullText, parseHomeownerRefundPageRows, parseRenterRefundPageRows, buildHomeownerRefundTables, buildRenterRefundTables, overlayGenericTableRows, normalizeRefundJsonRows, normalizeHomeownerRefundJsonRows, parseOrPdfRows, normalizeDeterministicRowsToData, mergeExtractedData, sortMarriageCreditRows, buildMarriageCreditReview, buildGenericTableReview, getEffectivePdfPageRange, renderSelectedSource, updateActionButtons, showDiffTab };
+if (typeof module !== 'undefined' && module.exports) module.exports = { appState, parseIntegerText, groupPdfTextItemsByRow, findNumericItemsInRange, findMinnesotaValueWindow, parseMinnesotaPdfRows, parseMarriageCreditPdfRows, parseMarriageCreditFromFullText, parseHomeownerRefundPageRows, parseRenterRefundPageRows, buildHomeownerRefundTables, buildRenterRefundTables, overlayGenericTableRows, normalizeRefundJsonRows, normalizeHomeownerRefundJsonRows, parseOrPdfRows, parseCoFamilyAffordabilityPageRows, buildCoFamilyReview, normalizeDeterministicRowsToData, mergeExtractedData, sortMarriageCreditRows, buildMarriageCreditReview, buildGenericTableReview, getEffectivePdfPageRange, renderSelectedSource, updateActionButtons, showDiffTab };
 if (typeof window !== 'undefined' && typeof document !== 'undefined') init();
+
+
+
+
 
 
 

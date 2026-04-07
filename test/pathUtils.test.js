@@ -8,7 +8,9 @@ const {
   getHomeownerRefundRowCanonicalPath,
   getHomeownerRefundCanonicalPath,
   getRenterRefundRowCanonicalPath,
-  getRenterRefundCanonicalPath
+  getRenterRefundCanonicalPath,
+  getCoFamilyAffordabilityUnder5CanonicalPath,
+  getCoFamilyAffordabilityAge6To16CanonicalPath
 } = require('../pathUtils');
 
 test('MN M1MA path regression: default path points to TaxEngine marriage credit JSON', () => {
@@ -45,4 +47,12 @@ test('MN M1MA path regression: screenshot malformed path with mixed separators i
   });
 
   assert.equal(normalized.M1MA, getMarriageCreditCanonicalPath(2025));
+});
+
+
+test('CO family-affordability path regression: default paths point to both Colorado TaxEngine JSON files', () => {
+  const paths = buildDefaultPaths('CO', 2025, 'family-affordability');
+
+  assert.equal(paths.CO_FAMILY_UNDER5, getCoFamilyAffordabilityUnder5CanonicalPath(2025));
+  assert.equal(paths.CO_FAMILY_AGE6TO16, getCoFamilyAffordabilityAge6To16CanonicalPath(2025));
 });

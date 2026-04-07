@@ -4,13 +4,14 @@ Desktop Electron app for extracting state tax table values from official instruc
 
 ## What It Does
 
-- Supports Oregon and Minnesota.
+- Supports Oregon, Minnesota, and Colorado.
 - Uses an instruction PDF as the extraction source.
 - Requires manual entry of the tax-table start and end pages.
 - Uses deterministic PDF parsers for supported states.
 - Shows a review screen before writing JSON updates.
 - Updates the selected JSON table files and the `Year` field.
 - Supports a dedicated Minnesota `M1MA Marriage Credit` workflow with full-table preview and single-file replace.
+- Supports a dedicated Colorado `Family Affordability Tax Credit` workflow with dual-table preview and two-file replace.
 
 ## Supported State Setups
 
@@ -47,6 +48,23 @@ Desktop Electron app for extracting state tax table values from official instruc
   - Yes, with a full-text fallback for PDFs whose table rows are grouped inconsistently
 - Example 2025 page range:
   - `1-1`
+
+### Colorado Family Affordability Tax Credit
+- Workflow:
+  - `Family Affordability Tax Credit`
+- Target JSON files:
+  - `C:\TaxEngine\OCE-Regulatory-{regulatoryYear}\Source\CO\Utils\Tables\FamilyAffordabilityTaxCreditUnderaAge5.table.json`
+  - `C:\TaxEngine\OCE-Regulatory-{regulatoryYear}\Source\CO\Utils\Tables\FamilyAffordabilityTaxCreditFrmAge6To16.table.json`
+- Table shape:
+  - Two separate lookup tables using `FilingStatus`, `USAmount`, and `Value`
+- Special rule:
+  - `QualifyingWidow` uses the same values as the `Single / Head of Household / Married Filing Separately` AGI column
+- Review mode:
+  - Full extracted preview for both tables before replace
+- Deterministic PDF parser:
+  - Yes
+- Example 2025 page range:
+  - `3-4`
 
 ## Installation
 
@@ -86,7 +104,7 @@ This generates a Windows NSIS installer in `dist/` named like `State-Tax-Table-U
 1. Start the app.
 2. Select the state.
 3. Select the tax year.
-4. Select the workflow when Minnesota offers more than one option.
+4. Select the workflow when the chosen state offers more than one option.
 5. Confirm the JSON file path or paths.
 6. Click `Select PDF` and choose the instruction booklet.
 7. Enter the PDF start and end tax-table pages manually.
@@ -119,22 +137,37 @@ This generates a Windows NSIS installer in `dist/` named like `State-Tax-Table-U
 9. Review the full extracted marriage-credit table.
 10. Click `Replace Marriage Credit JSON`.
 
+### Colorado Family Affordability Tax Credit
+
+1. Start the app.
+2. Select state `Colorado`.
+3. Select the tax year.
+4. Choose workflow `Family Affordability Tax Credit`.
+5. Confirm both Colorado Family Affordability JSON paths.
+6. Click `Select PDF` and choose the DR 0104CN instruction PDF.
+7. Enter the page range that contains the Age 5 and Under and Age 6 to 16 tables.
+8. Run extraction.
+9. Review both extracted tables.
+10. Click `Replace Family Affordability JSON`.
+
 ## PDF Workflow Notes
 
-- Select only supported Oregon or Minnesota PDFs.
+- Select only supported Oregon, Minnesota, or Colorado PDFs.
 - Enter only the tax-table page range you want parsed.
 - Extraction uses deterministic PDF text parsing.
 - Review the extracted diffs before updating standard tax-table JSON files.
 - For `M1MA Marriage Credit`, review the full extracted table before replacing the JSON file.
+- For Colorado `Family Affordability Tax Credit`, review both extracted tables before replacing the JSON files.
 
 ## Project Structure
 
 - [main.js](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/main.js): Electron main process and IPC handlers
 - [pathUtils.js](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/pathUtils.js): workflow-specific JSON path defaults and normalization helpers
 - [preload.js](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/preload.js): safe renderer bridge
-- [renderer.js](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/renderer.js): UI, extraction flow, deterministic parsers, diff review, and M1MA full-table preview
+- [renderer.js](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/renderer.js): UI, extraction flow, deterministic parsers, diff review, and workflow-specific full-table previews
 - [States/OR.js](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/States/OR.js): Oregon state config
 - [States/MN.js](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/States/MN.js): Minnesota state config
+- [States/CO.js](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/States/CO.js): Colorado state config
 
 ## Manual Scenario Tests
 
@@ -155,6 +188,7 @@ This generates a Windows NSIS installer in `dist/` named like `State-Tax-Table-U
 - Verify you have write permission for the target folders.
 - Verify the selected state matches the selected JSON table set.
 - For `M1MA Marriage Credit`, verify the target path resolves to `MNMarriageCredit.table.json` under `C:\TaxEngine\OCE-Regulatory-{regulatoryYear}\Source\MN\Utils\Tables\`.
+- For Colorado `Family Affordability Tax Credit`, verify both target paths resolve under `C:\TaxEngine\OCE-Regulatory-{regulatoryYear}\Source\CO\Utils\Tables\`.
 
 ### App does not start
 - Run `npm install` again.
@@ -163,4 +197,4 @@ This generates a Windows NSIS installer in `dist/` named like `State-Tax-Table-U
 ## Version
 
 - App version: `2.0.0`
-- Supported deterministic PDF parser states: `OR`, `MN`
+- Supported deterministic PDF parser states: `OR`, `MN`, `CO`

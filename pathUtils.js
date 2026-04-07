@@ -20,6 +20,14 @@ function getRenterRefundCanonicalPath(regulatoryYear) {
   return String.raw`C:\TaxEngine\OCE-Regulatory-${regulatoryYear}\Source\MN\Utils\Tables\M1PRRenterRefundTable.table.json`;
 }
 
+function getCoFamilyAffordabilityUnder5CanonicalPath(regulatoryYear) {
+  return String.raw`C:\TaxEngine\OCE-Regulatory-${regulatoryYear}\Source\CO\Utils\Tables\FamilyAffordabilityTaxCreditUnderaAge5.table.json`;
+}
+
+function getCoFamilyAffordabilityAge6To16CanonicalPath(regulatoryYear) {
+  return String.raw`C:\TaxEngine\OCE-Regulatory-${regulatoryYear}\Source\CO\Utils\Tables\FamilyAffordabilityTaxCreditFrmAge6To16.table.json`;
+}
+
 function buildDefaultPaths(stateCode, regulatoryYear, workflowKey = 'standard') {
   if (stateCode === 'MN' && workflowKey === 'm1ma') {
     return {
@@ -38,6 +46,13 @@ function buildDefaultPaths(stateCode, regulatoryYear, workflowKey = 'standard') 
     return {
       M1PR_ROW: getRenterRefundRowCanonicalPath(regulatoryYear),
       M1PR_REFUND: getRenterRefundCanonicalPath(regulatoryYear)
+    };
+  }
+
+  if (stateCode === 'CO' && workflowKey === 'family-affordability') {
+    return {
+      CO_FAMILY_UNDER5: getCoFamilyAffordabilityUnder5CanonicalPath(regulatoryYear),
+      CO_FAMILY_AGE6TO16: getCoFamilyAffordabilityAge6To16CanonicalPath(regulatoryYear)
     };
   }
 
@@ -95,8 +110,9 @@ module.exports = {
   getHomeownerRefundCanonicalPath,
   getRenterRefundRowCanonicalPath,
   getRenterRefundCanonicalPath,
+  getCoFamilyAffordabilityUnder5CanonicalPath,
+  getCoFamilyAffordabilityAge6To16CanonicalPath,
   buildDefaultPaths,
   buildStorageKey,
   normalizeSavedPaths
 };
-

@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const MN_CONFIG = require('../States/MN.js');
 const OR_CONFIG = require('../States/OR.js');
+const CO_CONFIG = require('../States/CO.js');
 const {
   appState,
   parseMinnesotaPdfRows,
@@ -15,6 +16,8 @@ const {
   normalizeRefundJsonRows,
   normalizeHomeownerRefundJsonRows,
   parseOrPdfRows,
+  parseCoFamilyAffordabilityPageRows,
+  buildCoFamilyReview,
   normalizeDeterministicRowsToData,
   getEffectivePdfPageRange,
   renderSelectedSource,
@@ -481,4 +484,218 @@ test('Review tab scenario: switching tabs keeps exactly one active tab and panel
   assert.equal(jointTab.classList.contains('active'), false);
   assert.equal(singlePanel.classList.contains('active'), true);
   assert.equal(jointPanel.classList.contains('active'), false);
+});
+
+
+test('CO family-affordability regression: page parser expands both AGI columns into five filing statuses', () => {
+  const rows = parseCoFamilyAffordabilityPageRows([
+    pdfTextItem('Age 5 and Under Family Affordability Tax Credit Table', 200, 700),
+    pdfTextItem('$15,000 or less', 120, 650),
+    pdfTextItem('$26,000 or less', 320, 650),
+    pdfTextItem('$3,273', 500, 650),
+    pdfTextItem('$15,001 to $20,000', 120, 630),
+    pdfTextItem('$26,001 to $31,000', 320, 630),
+    pdfTextItem('$3,048', 500, 630),
+    pdfTextItem('$20,001 to $25,000', 120, 610),
+    pdfTextItem('$31,001 to $36,000', 320, 610),
+    pdfTextItem('$2,823', 500, 610),
+    pdfTextItem('$25,001 to $30,000', 120, 590),
+    pdfTextItem('$36,001 to $41,000', 320, 590),
+    pdfTextItem('$2,598', 500, 590),
+    pdfTextItem('$30,001 to $35,000', 120, 570),
+    pdfTextItem('$41,001 to $46,000', 320, 570),
+    pdfTextItem('$2,373', 500, 570),
+    pdfTextItem('$35,001 to $40,000', 120, 550),
+    pdfTextItem('$46,001 to $51,000', 320, 550),
+    pdfTextItem('$2,148', 500, 550),
+    pdfTextItem('$40,001 to $45,000', 120, 530),
+    pdfTextItem('$51,001 to $56,000', 320, 530),
+    pdfTextItem('$1,923', 500, 530),
+    pdfTextItem('$45,001 to $50,000', 120, 510),
+    pdfTextItem('$56,001 to $61,000', 320, 510),
+    pdfTextItem('$1,698', 500, 510),
+    pdfTextItem('$50,001 to $55,000', 120, 490),
+    pdfTextItem('$61,001 to $66,000', 320, 490),
+    pdfTextItem('$1,473', 500, 490),
+    pdfTextItem('$55,001 to $60,000', 120, 470),
+    pdfTextItem('$66,001 to $71,000', 320, 470),
+    pdfTextItem('$1,248', 500, 470),
+    pdfTextItem('$60,001 to $65,000', 120, 450),
+    pdfTextItem('$71,001 to $76,000', 320, 450),
+    pdfTextItem('$1,023', 500, 450),
+    pdfTextItem('$65,001 to $70,000', 120, 430),
+    pdfTextItem('$76,001 to $81,000', 320, 430),
+    pdfTextItem('$798', 500, 430),
+    pdfTextItem('$70,001 to $75,000', 120, 410),
+    pdfTextItem('$81,001 to $86,000', 320, 410),
+    pdfTextItem('$573', 500, 410),
+    pdfTextItem('$75,001 to $80,000', 120, 390),
+    pdfTextItem('$86,001 to $91,000', 320, 390),
+    pdfTextItem('$348', 500, 390),
+    pdfTextItem('$80,001 to $85,000', 120, 370),
+    pdfTextItem('$91,001 to $96,000', 320, 370),
+    pdfTextItem('$123', 500, 370),
+    pdfTextItem('$85,001 or more', 120, 350),
+    pdfTextItem('$96,001 or more', 320, 350),
+    pdfTextItem('$0', 500, 350),
+    pdfTextItem('Line 7 Family Affordability Tax Credit Ages 5 and Under', 120, 320)
+  ], { title: 'Age 5 and Under Family Affordability Tax Credit Table' });
+
+  assert.equal(rows.length, 75);
+  assert.deepEqual(rows.slice(0, 5), [
+    { filingStatus: 'FilingStatus.Single', amount: 15000, value: 3273, source: 'pdf' },
+    { filingStatus: 'FilingStatus.Single', amount: 20000, value: 3048, source: 'pdf' },
+    { filingStatus: 'FilingStatus.Single', amount: 25000, value: 2823, source: 'pdf' },
+    { filingStatus: 'FilingStatus.Single', amount: 30000, value: 2598, source: 'pdf' },
+    { filingStatus: 'FilingStatus.Single', amount: 35000, value: 2373, source: 'pdf' }
+  ]);
+  assert.deepEqual(rows.filter(row => row.filingStatus === 'FilingStatus.MarriedFilingJointly').slice(0, 3), [
+    { filingStatus: 'FilingStatus.MarriedFilingJointly', amount: 26000, value: 3273, source: 'pdf' },
+    { filingStatus: 'FilingStatus.MarriedFilingJointly', amount: 31000, value: 3048, source: 'pdf' },
+    { filingStatus: 'FilingStatus.MarriedFilingJointly', amount: 36000, value: 2823, source: 'pdf' }
+  ]);
+  assert.deepEqual(rows.filter(row => row.filingStatus === 'FilingStatus.QualifyingWidow').slice(0, 2), [
+    { filingStatus: 'FilingStatus.QualifyingWidow', amount: 15000, value: 3273, source: 'pdf' },
+    { filingStatus: 'FilingStatus.QualifyingWidow', amount: 20000, value: 3048, source: 'pdf' }
+  ]);
+});
+
+test('CO family-affordability regression: value column ignores right-margin line numbers on page 4', () => {
+  const rows = parseCoFamilyAffordabilityPageRows([
+    pdfTextItem('Age 6 to 16 Family Affordability Tax Credit Table', 200, 700),
+    pdfTextItem('$15,000 or less', 120, 650),
+    pdfTextItem('$26,000 or less', 320, 650),
+    pdfTextItem('$2,455', 480, 650),
+    pdfTextItem('17', 584, 649),
+    pdfTextItem('$15,001 to $20,000', 120, 630),
+    pdfTextItem('$26,001 to $31,000', 320, 630),
+    pdfTextItem('$2,286', 480, 630),
+    pdfTextItem('18', 584, 629),
+    pdfTextItem('$20,001 to $25,000', 120, 610),
+    pdfTextItem('$31,001 to $36,000', 320, 610),
+    pdfTextItem('$2,117', 480, 610),
+    pdfTextItem('19', 584, 609),
+    pdfTextItem('$25,001 to $30,000', 120, 590),
+    pdfTextItem('$36,001 to $41,000', 320, 590),
+    pdfTextItem('$1,949', 480, 590),
+    pdfTextItem('20', 584, 589),
+    pdfTextItem('$30,001 to $35,000', 120, 570),
+    pdfTextItem('$41,001 to $46,000', 320, 570),
+    pdfTextItem('$1,780', 480, 570),
+    pdfTextItem('21', 584, 569),
+    pdfTextItem('$35,001 to $40,000', 120, 550),
+    pdfTextItem('$46,001 to $51,000', 320, 550),
+    pdfTextItem('$1,611', 480, 550),
+    pdfTextItem('22', 584, 549),
+    pdfTextItem('$40,001 to $45,000', 120, 530),
+    pdfTextItem('$51,001 to $56,000', 320, 530),
+    pdfTextItem('$1,442', 480, 530),
+    pdfTextItem('23', 584, 529),
+    pdfTextItem('$45,001 to $50,000', 120, 510),
+    pdfTextItem('$56,001 to $61,000', 320, 510),
+    pdfTextItem('$1,274', 480, 510),
+    pdfTextItem('24', 584, 509),
+    pdfTextItem('$50,001 to $55,000', 120, 490),
+    pdfTextItem('$61,001 to $66,000', 320, 490),
+    pdfTextItem('$1,105', 480, 490),
+    pdfTextItem('25', 584, 489),
+    pdfTextItem('$55,001 to $60,000', 120, 470),
+    pdfTextItem('$66,001 to $71,000', 320, 470),
+    pdfTextItem('$936', 485, 470),
+    pdfTextItem('26', 584, 469),
+    pdfTextItem('$60,001 to $65,000', 120, 450),
+    pdfTextItem('$71,001 to $76,000', 320, 450),
+    pdfTextItem('$767', 485, 450),
+    pdfTextItem('27', 584, 449),
+    pdfTextItem('$65,001 to $70,000', 120, 430),
+    pdfTextItem('$76,001 to $81,000', 320, 430),
+    pdfTextItem('$598', 485, 430),
+    pdfTextItem('28', 584, 429),
+    pdfTextItem('$70,001 to $75,000', 120, 410),
+    pdfTextItem('$81,001 to $86,000', 320, 410),
+    pdfTextItem('$430', 485, 410),
+    pdfTextItem('29', 584, 409),
+    pdfTextItem('$75,001 to $80,000', 120, 390),
+    pdfTextItem('$86,001 to $91,000', 320, 390),
+    pdfTextItem('$261', 485, 390),
+    pdfTextItem('30', 584, 389),
+    pdfTextItem('$80,001 to $85,000', 120, 370),
+    pdfTextItem('$91,001 to $96,000', 320, 370),
+    pdfTextItem('$92', 488, 370),
+    pdfTextItem('31', 584, 369),
+    pdfTextItem('$85,001 or more', 120, 350),
+    pdfTextItem('$96,001 or more', 320, 350),
+    pdfTextItem('$0', 492, 350),
+    pdfTextItem('Line 10 Family Affordability Tax Credit Ages 6 to 16', 120, 320)
+  ], { title: 'Age 6 to 16 Family Affordability Tax Credit Table' });
+
+  assert.equal(rows.find(row => row.filingStatus === 'FilingStatus.Single' && row.amount === 15000)?.value, 2455);
+  assert.equal(rows.find(row => row.filingStatus === 'FilingStatus.Single' && row.amount === 25000)?.value, 2117);
+  assert.equal(rows.find(row => row.filingStatus === 'FilingStatus.Single' && row.amount === 35000)?.value, 1780);
+  assert.equal(rows.find(row => row.filingStatus === 'FilingStatus.MarriedFilingJointly' && row.amount === 26000)?.value, 2455);
+});
+
+test('CO family-affordability regression: review compares filing-status plus amount keys against current JSON rows', () => {
+  const review = buildCoFamilyReview([
+    { filingStatus: 'FilingStatus.Single', amount: 15000, value: 3273 },
+    { filingStatus: 'FilingStatus.MarriedFilingJointly', amount: 26000, value: 3273 },
+    { filingStatus: 'FilingStatus.QualifyingWidow', amount: 15000, value: 3273 }
+  ], {
+    success: true,
+    year: '2024',
+    rows: [
+      { filingStatus: 'FilingStatus.Single', amount: 15000, value: 3200 },
+      { filingStatus: 'FilingStatus.MarriedFilingJointly', amount: 26000, value: 3273 },
+      { filingStatus: 'FilingStatus.QualifyingWidow', amount: 15000, value: 3100 },
+      { filingStatus: 'FilingStatus.HeadOfHousehold', amount: 15000, value: 3273 }
+    ]
+  });
+
+  assert.equal(review.changedCount, 2);
+  assert.equal(review.unchangedCount, 1);
+  assert.equal(review.missingCount, 1);
+  assert.equal(review.currentYear, '2024');
+});
+
+test('CO family-affordability scenario: extract and replace stay disabled until both tables and paths are present', () => {
+  resetAppState();
+  appState.selectedPdfPath = 'C\PDFs\CO_DR0104CN.pdf';
+  appState.selectedStateConfig = CO_CONFIG;
+  appState.selectedWorkflowKey = 'family-affordability';
+  appState.filePaths = { CO_FAMILY_UNDER5: 'under5.json' };
+
+  const extractBtn = { disabled: true };
+  const updateJsonBtn = { disabled: true };
+  const pdfSection = { style: { display: '' } };
+  const pdfSummary = { textContent: '' };
+  const pageStartInput = { value: '' };
+  const pageEndInput = { value: '' };
+
+  global.document = {
+    getElementById(id) {
+      return {
+        extractBtn,
+        updateJsonBtn,
+        pdfSelectionSection: pdfSection,
+        pdfSelectionSummary: pdfSummary,
+        pdfPageStartInput: pageStartInput,
+        pdfPageEndInput: pageEndInput
+      }[id];
+    }
+  };
+
+  appState.pdfPageRangeOverride = { start: '3', end: '4' };
+  renderSelectedSource();
+  updateActionButtons();
+  assert.equal(extractBtn.disabled, false);
+  assert.equal(updateJsonBtn.disabled, true);
+
+  appState.filePaths.CO_FAMILY_AGE6TO16 = 'age6to16.json';
+  appState.coFamilyAffordabilityReview = {
+    under5: { rows: [{ filingStatus: 'FilingStatus.Single', amount: 15000, value: 3273 }] },
+    age6to16: { rows: [{ filingStatus: 'FilingStatus.Single', amount: 15000, value: 2455 }] }
+  };
+  updateActionButtons();
+  assert.equal(updateJsonBtn.disabled, false);
+  assert.match(pdfSummary.textContent, /Family Affordability table pages 3-4/);
 });

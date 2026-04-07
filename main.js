@@ -370,6 +370,117 @@ ipcMain.handle('replace-generic-table', async (event, payload) => {
   }
 });
 
+function getCoFamilyStatusSortIndex(status) {
+  return {
+    'FilingStatus.Single': 0,
+    'FilingStatus.MarriedFilingJointly': 1,
+    'FilingStatus.MarriedFilingSeparately': 2,
+    'FilingStatus.HeadOfHousehold': 3,
+    'FilingStatus.QualifyingWidow': 4
+  }[status] ?? 999;
+}
+
+function normalizeCoFamilyAffordabilityRows(rows) {
+  return rows.map((row, index) => {
+    const filingStatus = String(row.filingStatus || '').trim();
+    const amount = Number(row.amount);
+    const value = Number(row.value);
+
+    if (!filingStatus) {
+      throw new Error(`Colorado family-affordability row ${index + 1} is missing a filing status.`);
+    }
+    if (!Number.isFinite(amount) || !Number.isFinite(value)) {
+      throw new Error(`Colorado family-affordability row ${index + 1} contains invalid numeric data.`);
+    }
+
+    return { filingStatus, amount, value };
+  }).sort((a, b) => getCoFamilyStatusSortIndex(a.filingStatus) - getCoFamilyStatusSortIndex(b.filingStatus) || a.amount - b.amount || a.value - b.value);
+}
+
+function buildCoFamilyAffordabilityFields(rows, existingFields) {
+  const valueShouldBeString = Array.isArray(existingFields)
+    && existingFields.length > 0
+    && typeof existingFields[0].Value === 'string';
+  const amountShouldBeString = Array.isArray(existingFields)
+    && existingFields.length > 0
+    && Array.isArray(existingFields[0].Key)
+    && typeof existingFields[0].Key[1] === 'string';
+
+  return rows.map(row => ({
+    Key: [row.filingStatus, amountShouldBeString ? String(row.amount) : Number(row.amount)],
+    Value: valueShouldBeString ? String(row.value) : Number(row.value),
+    ComplexTypeFields: [],
+    ComplexValue: {}
+  }));
+}
+
+ipcMain.handle('read-co-family-affordability-table', async (event, filePath) => {
+  try {
+    const raw = await fs.readFile(filePath, 'utf-8');
+    const data = JSON.parse(raw);
+    if (!Array.isArray(data.Fields)) {
+      return { success: false, message: 'Invalid JSON structure: missing Fields array' };
+    }
+
+    const rows = data.Fields.map((field, index) => {
+      if (!Array.isArray(field.Key) || field.Key.length < 2) {
+        throw new Error(`Field ${index + 1} is missing the expected filing-status plus amount key.`);
+      }
+      const filingStatus = String(field.Key[0] || '').trim();
+      const amount = Number(field.Key[1]);
+      const value = Number(field.Value);
+      if (!filingStatus || !Number.isFinite(amount) || !Number.isFinite(value)) {
+        throw new Error(`Field ${index + 1} contains invalid Colorado family-affordability data.`);
+      }
+      return { filingStatus, amount, value };
+    }).sort((a, b) => getCoFamilyStatusSortIndex(a.filingStatus) - getCoFamilyStatusSortIndex(b.filingStatus) || a.amount - b.amount || a.value - b.value);
+
+    return {
+      success: true,
+      rows,
+      year: data.Year,
+      metadata: {
+        Uid: data.Uid,
+        Entity: data.Entity,
+        Name: data.Name,
+        LookUpType: data.LookUpType,
+        LookUpTypeMultiple: data.LookUpTypeMultiple,
+        KeyTypes: data.KeyTypes,
+        TomKeyTypes: data.TomKeyTypes,
+        ValueType: data.ValueType,
+        TomValueType: data.TomValueType
+      }
+    };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+});
+
+ipcMain.handle('replace-co-family-affordability-table', async (event, payload) => {
+  try {
+    const raw = await fs.readFile(payload.filePath, 'utf-8');
+    const data = JSON.parse(raw);
+
+    if (!Array.isArray(data.Fields)) {
+      throw new Error('Invalid JSON structure: missing Fields array');
+    }
+
+    const normalizedRows = normalizeCoFamilyAffordabilityRows(payload.rows || []);
+
+    data.Year = payload.taxYear;
+    data.Fields = buildCoFamilyAffordabilityFields(normalizedRows, data.Fields);
+
+    await fs.writeFile(payload.filePath, JSON.stringify(data, null, 2), 'utf-8');
+
+    return {
+      success: true,
+      updatedCount: normalizedRows.length
+    };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+});
+
 ipcMain.handle('export-text-file', async (event, textContent) => {
   const result = await dialog.showSaveDialog(mainWindow, {
     title: 'Export Tax Table',
