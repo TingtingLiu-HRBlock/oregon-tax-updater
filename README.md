@@ -10,10 +10,27 @@ Desktop Electron app for extracting state tax table values from official instruc
 - Uses deterministic PDF parsers for supported states.
 - Shows a review screen before writing JSON updates.
 - Updates the selected JSON table files and the `Year` field.
+- Supports generic `Constants Maintenance` for all state and city codes that follow the shared TaxEngine constants-file pattern.
 - Supports a dedicated Minnesota `M1MA Marriage Credit` workflow with full-table preview and single-file replace.
 - Supports a dedicated Colorado `Family Affordability Tax Credit` workflow with dual-table preview and two-file replace.
 
 ## Supported State Setups
+
+### Generic Constants Maintenance
+- Availability:
+  - Any state or city code in the dropdown
+- Target JSON:
+  - `C:\TaxEngine\OCE-Regulatory-{regulatoryYear}\Source\{STATE_CODE}\Utils\{STATE_CODE}.consts.json`
+- Match rule:
+  - Constants where `Maintenance` is `Year Over Year` and `BaseType` is `DateTime`
+- Actions:
+  - `Increase year by 1`
+  - `Decrease year by 1`
+- Review mode:
+  - Full preview of all matching constants before write
+- Special behavior:
+  - No PDF is required for this workflow
+  - Updates both `Value` and `DataTimeValue`
 
 ### Oregon
 - Filing statuses:
@@ -23,6 +40,14 @@ Desktop Electron app for extracting state tax table values from official instruc
   - Yes
 - Example 2024 tax-table page range:
   - `26-28`
+
+### Additional Dropdown Codes
+- Includes generic state and city-code entries such as:
+  - `OHC` = Ohio City
+  - `NYC` = New York City
+  - `MOC` = Missouri City
+  - `ORC` = Oregon City
+- These entries use the shared `Constants Maintenance` workflow and the same TaxEngine constants-file pattern.
 
 ### Minnesota
 - Filing statuses:
@@ -150,6 +175,18 @@ This generates a Windows NSIS installer in `dist/` named like `State-Tax-Table-U
 9. Review both extracted tables.
 10. Click `Replace Family Affordability JSON`.
 
+### Generic Constants Maintenance
+
+1. Start the app.
+2. Select the state or city code.
+3. Select the tax year.
+4. Choose workflow `Constants Maintenance`.
+5. Confirm the constants JSON path.
+6. Choose `Increase year by 1` or `Decrease year by 1`.
+7. Click `Preview Year Shift`.
+8. Review all matching `Year Over Year` `DateTime` constants.
+9. Click `Apply Year Shift`.
+
 ## PDF Workflow Notes
 
 - Select only supported Oregon, Minnesota, or Colorado PDFs.
@@ -158,6 +195,7 @@ This generates a Windows NSIS installer in `dist/` named like `State-Tax-Table-U
 - Review the extracted diffs before updating standard tax-table JSON files.
 - For `M1MA Marriage Credit`, review the full extracted table before replacing the JSON file.
 - For Colorado `Family Affordability Tax Credit`, review both extracted tables before replacing the JSON files.
+- For `Constants Maintenance`, review the proposed date shifts before applying the update.
 
 ## Project Structure
 
@@ -189,6 +227,7 @@ This generates a Windows NSIS installer in `dist/` named like `State-Tax-Table-U
 - Verify the selected state matches the selected JSON table set.
 - For `M1MA Marriage Credit`, verify the target path resolves to `MNMarriageCredit.table.json` under `C:\TaxEngine\OCE-Regulatory-{regulatoryYear}\Source\MN\Utils\Tables\`.
 - For Colorado `Family Affordability Tax Credit`, verify both target paths resolve under `C:\TaxEngine\OCE-Regulatory-{regulatoryYear}\Source\CO\Utils\Tables\`.
+- For `Constants Maintenance`, verify the target path resolves under `C:\TaxEngine\OCE-Regulatory-{regulatoryYear}\Source\{STATE_CODE}\Utils\{STATE_CODE}.consts.json`.
 
 ### App does not start
 - Run `npm install` again.
@@ -198,3 +237,5 @@ This generates a Windows NSIS installer in `dist/` named like `State-Tax-Table-U
 
 - App version: `2.0.0`
 - Supported deterministic PDF parser states: `OR`, `MN`, `CO`
+- Supported constants-maintenance path pattern:
+  - `C:\TaxEngine\OCE-Regulatory-{regulatoryYear}\Source\{STATE_CODE}\Utils\{STATE_CODE}.consts.json`

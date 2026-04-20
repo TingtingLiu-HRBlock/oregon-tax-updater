@@ -116,6 +116,117 @@ ipcMain.handle('read-current-json-values', async (event, filePath) => {
   }
 });
 
+function parseIsoDateOnly(value) {
+  if (typeof value !== 'string') {
+    throw new Error('Expected a date string.');
+  }
+
+  const match = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    throw new Error(`Invalid DateTime value: ${value}`);
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const utcDate = new Date(Date.UTC(year, month - 1, day));
+
+  if (
+    utcDate.getUTCFullYear() !== year
+    || utcDate.getUTCMonth() !== month - 1
+    || utcDate.getUTCDate() !== day
+  ) {
+    throw new Error(`Invalid calendar date: ${value}`);
+  }
+
+  return { year, month, day };
+}
+
+function formatIsoDateOnly(year, month, day) {
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function shiftIsoDateByYears(value, deltaYears) {
+  const parsed = parseIsoDateOnly(value);
+  const shifted = new Date(Date.UTC(parsed.year + Number(deltaYears), parsed.month - 1, parsed.day));
+  return formatIsoDateOnly(
+    shifted.getUTCFullYear(),
+    shifted.getUTCMonth() + 1,
+    shifted.getUTCDate()
+  );
+}
+
+function getYearOverYearDateTimeConstants(constants) {
+  if (!Array.isArray(constants)) {
+    throw new Error('Invalid JSON structure: missing Constants array');
+  }
+
+  return constants
+    .map((constant, index) => ({ constant, index }))
+    .filter(({ constant }) => constant?.Maintenance === 'Year Over Year' && constant?.BaseType === 'DateTime')
+    .map(({ constant, index }) => {
+      const currentValue = String(constant.Value || '').trim();
+      const currentDateTimeValue = typeof constant.DataTimeValue === 'string' ? constant.DataTimeValue.trim() : '';
+      const shiftedValue = shiftIsoDateByYears(currentValue, 0);
+      const normalizedDateTimeValue = currentDateTimeValue || `${shiftedValue}T00:00:00.000Z`;
+
+      return {
+        index,
+        uid: constant.Uid || null,
+        name: constant.Name || `Constant ${index + 1}`,
+        description: constant.Description || '',
+        value: shiftedValue,
+        dataTimeValue: normalizedDateTimeValue
+      };
+    });
+}
+
+ipcMain.handle('read-constants-maintenance-file', async (event, filePath) => {
+  try {
+    const raw = await fs.readFile(filePath, 'utf-8');
+    const data = JSON.parse(raw);
+    const matches = getYearOverYearDateTimeConstants(data.Constants);
+
+    return {
+      success: true,
+      taxYear: data.TaxYear || null,
+      entity: data.Entity || null,
+      matches
+    };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+});
+
+ipcMain.handle('apply-constants-year-shift', async (event, payload) => {
+  try {
+    const deltaYears = Number(payload?.deltaYears);
+    if (!Number.isInteger(deltaYears) || ![-1, 1].includes(deltaYears)) {
+      throw new Error('deltaYears must be either 1 or -1.');
+    }
+
+    const raw = await fs.readFile(payload.filePath, 'utf-8');
+    const data = JSON.parse(raw);
+    const matches = getYearOverYearDateTimeConstants(data.Constants);
+
+    for (const match of matches) {
+      const constant = data.Constants[match.index];
+      const shiftedValue = shiftIsoDateByYears(match.value, deltaYears);
+      constant.Value = shiftedValue;
+      constant.DataTimeValue = `${shiftedValue}T00:00:00.000Z`;
+    }
+
+    await fs.writeFile(payload.filePath, JSON.stringify(data, null, 2), 'utf-8');
+
+    return {
+      success: true,
+      updatedCount: matches.length
+    };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+});
+
 ipcMain.handle('update-json-files', async (event, payload) => {
   const results = [];
 

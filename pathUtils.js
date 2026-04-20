@@ -28,6 +28,10 @@ function getCoFamilyAffordabilityAge6To16CanonicalPath(regulatoryYear) {
   return String.raw`C:\TaxEngine\OCE-Regulatory-${regulatoryYear}\Source\CO\Utils\Tables\FamilyAffordabilityTaxCreditFrmAge6To16.table.json`;
 }
 
+function getConstsCanonicalPath(stateCode, regulatoryYear) {
+  return `C:\\TaxEngine\\OCE-Regulatory-${regulatoryYear}\\Source\\${stateCode}\\Utils\\${stateCode}.consts.json`;
+}
+
 function buildDefaultPaths(stateCode, regulatoryYear, workflowKey = 'standard') {
   if (stateCode === 'MN' && workflowKey === 'm1ma') {
     return {
@@ -53,6 +57,12 @@ function buildDefaultPaths(stateCode, regulatoryYear, workflowKey = 'standard') 
     return {
       CO_FAMILY_UNDER5: getCoFamilyAffordabilityUnder5CanonicalPath(regulatoryYear),
       CO_FAMILY_AGE6TO16: getCoFamilyAffordabilityAge6To16CanonicalPath(regulatoryYear)
+    };
+  }
+
+  if (workflowKey === 'constants-maintenance') {
+    return {
+      CONSTS: getConstsCanonicalPath(stateCode, regulatoryYear)
     };
   }
 
@@ -112,6 +122,7 @@ module.exports = {
   getRenterRefundCanonicalPath,
   getCoFamilyAffordabilityUnder5CanonicalPath,
   getCoFamilyAffordabilityAge6To16CanonicalPath,
+  getConstsCanonicalPath,
   buildDefaultPaths,
   buildStorageKey,
   normalizeSavedPaths

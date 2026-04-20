@@ -10,7 +10,8 @@ const {
   getRenterRefundRowCanonicalPath,
   getRenterRefundCanonicalPath,
   getCoFamilyAffordabilityUnder5CanonicalPath,
-  getCoFamilyAffordabilityAge6To16CanonicalPath
+  getCoFamilyAffordabilityAge6To16CanonicalPath,
+  getConstsCanonicalPath
 } = require('../pathUtils');
 
 test('MN M1MA path regression: default path points to TaxEngine marriage credit JSON', () => {
@@ -55,4 +56,23 @@ test('CO family-affordability path regression: default paths point to both Color
 
   assert.equal(paths.CO_FAMILY_UNDER5, getCoFamilyAffordabilityUnder5CanonicalPath(2025));
   assert.equal(paths.CO_FAMILY_AGE6TO16, getCoFamilyAffordabilityAge6To16CanonicalPath(2025));
+});
+
+test('Generic constants-maintenance path regression: Colorado constants path follows the shared state-code pattern', () => {
+  const paths = buildDefaultPaths('CO', 2025, 'constants-maintenance');
+
+  assert.equal(paths.CONSTS, getConstsCanonicalPath('CO', 2025));
+});
+
+test('Generic constants-maintenance path regression: resolved constants path never includes a literal ${stateCode} placeholder', () => {
+  const paths = buildDefaultPaths('OR', 2025, 'constants-maintenance');
+
+  assert.equal(paths.CONSTS, String.raw`C:\TaxEngine\OCE-Regulatory-2025\Source\OR\Utils\OR.consts.json`);
+  assert.equal(paths.CONSTS.includes('${stateCode}'), false);
+});
+
+test('Generic constants-maintenance path regression: Alabama constants path follows the shared state-code pattern', () => {
+  const paths = buildDefaultPaths('AL', 2026, 'constants-maintenance');
+
+  assert.equal(paths.CONSTS, getConstsCanonicalPath('AL', 2026));
 });

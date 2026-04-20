@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const MN_CONFIG = require('../States/MN.js');
 const OR_CONFIG = require('../States/OR.js');
 const CO_CONFIG = require('../States/CO.js');
+const { getState } = require('../States');
 const {
   appState,
   parseMinnesotaPdfRows,
@@ -18,6 +19,8 @@ const {
   parseOrPdfRows,
   parseCoFamilyAffordabilityPageRows,
   buildCoFamilyReview,
+  shiftDateTimeValueByYears,
+  buildConstantsMaintenanceReview,
   normalizeDeterministicRowsToData,
   getEffectivePdfPageRange,
   renderSelectedSource,
@@ -36,6 +39,9 @@ function resetAppState() {
   appState.diffResults = null;
   appState.marriageCreditReview = null;
   appState.homeownerRefundReview = null;
+  appState.coFamilyAffordabilityReview = null;
+  appState.constantsMaintenanceReview = null;
+  appState.constantsShiftDeltaYears = 1;
 }
 
 function pdfTextItem(str, x, y = 500) {
@@ -403,6 +409,33 @@ test('OR scenario checkpoints: Oregon parser keeps representative values through
   assert.equal(normalized.J[49900], 3769);
 });
 
+test('Constants maintenance: year-over-year DateTime preview shifts full dates by one year', () => {
+  const review = buildConstantsMaintenanceReview({
+    taxYear: '2025',
+    entity: 'OH',
+    matches: [
+      {
+        index: 12,
+        uid: 'abc',
+        name: 'StateExtendedDueDate',
+        description: 'State Extended Due Date',
+        value: '2026-10-15',
+        dataTimeValue: '2026-10-15T00:00:00.000Z'
+      }
+    ]
+  }, 1);
+
+  assert.equal(review.rows.length, 1);
+  assert.equal(review.rows[0].currentValue, '2026-10-15');
+  assert.equal(review.rows[0].proposedValue, '2027-10-15');
+  assert.equal(review.rows[0].proposedDataTimeValue, '2027-10-15T00:00:00.000Z');
+});
+
+test('Constants maintenance: leap-day dates normalize safely when shifting years', () => {
+  assert.equal(shiftDateTimeValueByYears('2024-02-29', 1), '2025-03-01');
+  assert.equal(shiftDateTimeValueByYears('2024-02-29', -1), '2023-03-01');
+});
+
 test('PDF page range scenario: manual range is required before extraction becomes available', () => {
   resetAppState();
   appState.selectedPdfPath = 'C\\PDFs\\MN_m1-inst-24_final_2-23-26.pdf';
@@ -410,6 +443,8 @@ test('PDF page range scenario: manual range is required before extraction become
 
   const extractBtn = { disabled: true };
   const updateJsonBtn = { disabled: true };
+  const uploadArea = { style: { display: '' } };
+  const selectPdfBtn = { style: { display: '' } };
   const pdfSection = { style: { display: '' } };
   const pdfSummary = { textContent: '' };
   const pageStartInput = { value: '' };
@@ -420,6 +455,8 @@ test('PDF page range scenario: manual range is required before extraction become
       return {
         extractBtn,
         updateJsonBtn,
+        uploadArea,
+        selectPdfBtn,
         pdfSelectionSection: pdfSection,
         pdfSelectionSummary: pdfSummary,
         pdfPageStartInput: pageStartInput,
@@ -446,6 +483,85 @@ test('PDF page range scenario: manual range is required before extraction become
 
   assert.deepEqual(getEffectivePdfPageRange(), { start: 30, end: 36 });
   assert.match(pdfSummary.textContent, /Tax table pages 30-36/);
+  assert.equal(extractBtn.disabled, false);
+});
+
+test('Constants maintenance: preview button uses the constants file path and does not require a PDF', () => {
+  resetAppState();
+  appState.selectedStateConfig = getState('OH');
+  appState.selectedStateCode = 'OH';
+  appState.selectedWorkflowKey = 'constants-maintenance';
+  appState.filePaths = { CONSTS: 'C:\\TaxEngine\\OCE-Regulatory-2025\\Source\\OH\\Utils\\OH.consts.json' };
+
+  const extractBtn = { disabled: true };
+  const updateJsonBtn = { disabled: true };
+  const uploadArea = { style: { display: '' } };
+  const selectPdfBtn = { style: { display: '' } };
+  const pdfSection = { style: { display: '' } };
+  const pdfSummary = { textContent: '' };
+  const pageStartInput = { value: '' };
+  const pageEndInput = { value: '' };
+
+  global.document = {
+    getElementById(id) {
+      return {
+        extractBtn,
+        updateJsonBtn,
+        uploadArea,
+        selectPdfBtn,
+        pdfSelectionSection: pdfSection,
+        pdfSelectionSummary: pdfSummary,
+        pdfPageStartInput: pageStartInput,
+        pdfPageEndInput: pageEndInput
+      }[id];
+    }
+  };
+
+  renderSelectedSource();
+  updateActionButtons();
+
+  assert.equal(selectPdfBtn.style.display, 'none');
+  assert.equal(pdfSection.style.display, 'none');
+  assert.equal(extractBtn.disabled, false);
+  assert.equal(updateJsonBtn.disabled, true);
+});
+
+test('Constants maintenance: non-Ohio states use the same no-PDF preview flow', () => {
+  resetAppState();
+  appState.selectedStateConfig = CO_CONFIG;
+  appState.selectedStateCode = 'CO';
+  appState.selectedWorkflowKey = 'constants-maintenance';
+  appState.filePaths = { CONSTS: 'C:\\TaxEngine\\OCE-Regulatory-2025\\Source\\CO\\Utils\\CO.consts.json' };
+
+  const extractBtn = { disabled: true };
+  const updateJsonBtn = { disabled: true };
+  const uploadArea = { style: { display: '' } };
+  const selectPdfBtn = { style: { display: '' } };
+  const pdfSection = { style: { display: '' } };
+  const pdfSummary = { textContent: '' };
+  const pageStartInput = { value: '' };
+  const pageEndInput = { value: '' };
+
+  global.document = {
+    getElementById(id) {
+      return {
+        extractBtn,
+        updateJsonBtn,
+        uploadArea,
+        selectPdfBtn,
+        pdfSelectionSection: pdfSection,
+        pdfSelectionSummary: pdfSummary,
+        pdfPageStartInput: pageStartInput,
+        pdfPageEndInput: pageEndInput
+      }[id];
+    }
+  };
+
+  renderSelectedSource();
+  updateActionButtons();
+
+  assert.equal(selectPdfBtn.style.display, 'none');
+  assert.equal(pdfSection.style.display, 'none');
   assert.equal(extractBtn.disabled, false);
 });
 
@@ -666,6 +782,8 @@ test('CO family-affordability scenario: extract and replace stay disabled until 
 
   const extractBtn = { disabled: true };
   const updateJsonBtn = { disabled: true };
+  const uploadArea = { style: { display: '' } };
+  const selectPdfBtn = { style: { display: '' } };
   const pdfSection = { style: { display: '' } };
   const pdfSummary = { textContent: '' };
   const pageStartInput = { value: '' };
@@ -676,6 +794,8 @@ test('CO family-affordability scenario: extract and replace stay disabled until 
       return {
         extractBtn,
         updateJsonBtn,
+        uploadArea,
+        selectPdfBtn,
         pdfSelectionSection: pdfSection,
         pdfSelectionSummary: pdfSummary,
         pdfPageStartInput: pageStartInput,

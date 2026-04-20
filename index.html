@@ -94,6 +94,17 @@
           Extract Data
         </button>
 
+        <div id="constantsShiftControls" class="api-key-row" style="display:none; margin-top:12px; gap:12px; align-items:end; flex-wrap:wrap;">
+          <div class="form-group" style="margin:0; min-width:220px;">
+            <label for="constantsShiftDirectionSelect">Year Shift</label>
+            <select id="constantsShiftDirectionSelect" class="select-input">
+              <option value="1">Increase year by 1</option>
+              <option value="-1">Decrease year by 1</option>
+            </select>
+          </div>
+          <p class="upload-hint" id="constantsShiftHint" style="margin:0; max-width:520px;">Applies to all constants marked Year Over Year with BaseType DateTime.</p>
+        </div>
+
         <div id="extractionProgress" class="progress-block" style="display:none">
           <div class="progress-bar">
             <div id="progressFill" class="progress-fill"></div>
