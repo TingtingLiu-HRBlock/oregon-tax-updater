@@ -1,4 +1,4 @@
-# State Tax Table Updater
+# Bee Updater
 
 Desktop Electron app for extracting state tax table values from official instruction PDFs and updating the corresponding JSON table files.
 
@@ -125,7 +125,7 @@ This generates a Windows NSIS installer in `dist/` named like `State-Tax-Table-U
 1. Run `npm install` once on the build machine.
 2. Run `npm run build`.
 3. Share the generated installer from `dist/`.
-4. Teammates can install `State Tax Table Updater` without needing Node.js or the source repo.
+4. Teammates can install `Bee Updater` without needing Node.js or the source repo.
 
 ## Typical Workflow
 

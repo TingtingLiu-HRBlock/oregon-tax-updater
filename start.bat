@@ -1,6 +1,6 @@
 @echo off
 echo ========================================
-echo State Tax Table Updater
+echo Bee Updater
 echo ========================================
 echo.
 echo Starting the application...

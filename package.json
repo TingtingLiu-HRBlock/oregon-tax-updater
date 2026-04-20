@@ -1,5 +1,5 @@
 {
-  "name": "state-tax-updater",
+  "name": "bee-updater",
   "version": "2.0.0",
   "description": "Multi-state tax table updater with deterministic PDF extraction",
   "main": "main.js",
@@ -9,11 +9,11 @@
     "build": "electron-builder"
   },
   "build": {
-    "appId": "com.hrblock.state-tax-updater",
-    "productName": "State Tax Table Updater",
+    "appId": "com.hrblock.bee-updater",
+    "productName": "Bee Updater",
     "win": {
       "target": "nsis",
-      "artifactName": "State-Tax-Table-Updater-Setup-${version}.${ext}"
+      "artifactName": "Bee-Updater-Setup-${version}.${ext}"
     },
     "files": [
       "main.js",
@@ -26,11 +26,11 @@
       "assets/**"
     ],
     "nsis": {
-      "shortcutName": "State Tax Table Updater",
-      "uninstallDisplayName": "State Tax Table Updater",
-      "artifactName": "State-Tax-Table-Updater-Setup-${version}.${ext}"
+      "shortcutName": "Bee Updater",
+      "uninstallDisplayName": "Bee Updater",
+      "artifactName": "Bee-Updater-Setup-${version}.${ext}"
     },
-    "executableName": "StateTaxTableUpdater"
+    "executableName": "BeeUpdater"
   },
   "dependencies": {
     "pdfjs-dist": "^4.8.69"
