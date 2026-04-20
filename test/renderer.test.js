@@ -20,6 +20,7 @@ const {
   parseCoFamilyAffordabilityPageRows,
   buildCoFamilyReview,
   shiftDateTimeValueByYears,
+  suggestYearOverYearValue,
   buildConstantsMaintenanceReview,
   normalizeDeterministicRowsToData,
   getEffectivePdfPageRange,
@@ -42,6 +43,7 @@ function resetAppState() {
   appState.coFamilyAffordabilityReview = null;
   appState.constantsMaintenanceReview = null;
   appState.constantsShiftDeltaYears = 1;
+  appState.constantsMaintenanceUi = { activeTab: 'auto' };
 }
 
 function pdfTextItem(str, x, y = 500) {
@@ -413,7 +415,7 @@ test('Constants maintenance: year-over-year DateTime preview shifts full dates b
   const review = buildConstantsMaintenanceReview({
     taxYear: '2025',
     entity: 'OH',
-    matches: [
+    autoMatches: [
       {
         index: 12,
         uid: 'abc',
@@ -422,18 +424,86 @@ test('Constants maintenance: year-over-year DateTime preview shifts full dates b
         value: '2026-10-15',
         dataTimeValue: '2026-10-15T00:00:00.000Z'
       }
-    ]
+    ],
+    manualMatches: []
   }, 1);
 
-  assert.equal(review.rows.length, 1);
-  assert.equal(review.rows[0].currentValue, '2026-10-15');
-  assert.equal(review.rows[0].proposedValue, '2027-10-15');
-  assert.equal(review.rows[0].proposedDataTimeValue, '2027-10-15T00:00:00.000Z');
+  assert.equal(review.autoRows.length, 1);
+  assert.equal(review.manualRows.length, 0);
+  assert.equal(review.autoRows[0].currentValue, '2026-10-15');
+  assert.equal(review.autoRows[0].proposedValue, '2027-10-15');
+  assert.equal(review.autoRows[0].proposedDataTimeValue, '2027-10-15T00:00:00.000Z');
 });
 
 test('Constants maintenance: leap-day dates normalize safely when shifting years', () => {
   assert.equal(shiftDateTimeValueByYears('2024-02-29', 1), '2025-03-01');
   assert.equal(shiftDateTimeValueByYears('2024-02-29', -1), '2023-03-01');
+});
+
+test('Constants maintenance: suggestion engine shifts plain year values', () => {
+  const suggestion = suggestYearOverYearValue('2025', 1);
+
+  assert.equal(suggestion.suggestedValue, '2026');
+  assert.equal(suggestion.suggestionType, 'year');
+  assert.equal(suggestion.confidence, 'high');
+  assert.equal(suggestion.needsManualReview, false);
+});
+
+test('Constants maintenance: suggestion engine shifts MMYY values', () => {
+  const suggestion = suggestYearOverYearValue('1225', 1);
+
+  assert.equal(suggestion.suggestedValue, '1226');
+  assert.equal(suggestion.suggestionType, 'mmyy');
+  assert.equal(suggestion.confidence, 'high');
+});
+
+test('Constants maintenance: suggestion engine shifts embedded year text', () => {
+  const suggestion = suggestYearOverYearValue('Tax Year 2025 Credit', 1);
+
+  assert.equal(suggestion.suggestedValue, 'Tax Year 2026 Credit');
+  assert.equal(suggestion.suggestionType, 'embedded-year');
+  assert.equal(suggestion.confidence, 'medium');
+});
+
+test('Constants maintenance: review splits automatic DateTime rows from manual year-over-year suggestions', () => {
+  const review = buildConstantsMaintenanceReview({
+    taxYear: '2025',
+    entity: 'OH',
+    autoMatches: [
+      {
+        index: 1,
+        uid: 'auto',
+        name: 'StateExtendedDueDate',
+        description: 'State Extended Due Date',
+        value: '2026-10-15',
+        dataTimeValue: '2026-10-15T00:00:00.000Z'
+      }
+    ],
+    manualMatches: [
+      {
+        index: 2,
+        uid: 'year',
+        name: 'CurrentTaxYear',
+        description: 'Current tax year',
+        baseType: 'string',
+        value: '2025'
+      },
+      {
+        index: 3,
+        uid: 'mmyy',
+        name: 'CurrYrReportingPeriodMMYY',
+        description: 'Update yearly',
+        baseType: 'string',
+        value: '1225'
+      }
+    ]
+  }, 1);
+
+  assert.equal(review.autoRows.length, 1);
+  assert.equal(review.manualRows.length, 2);
+  assert.equal(review.manualRows[0].suggestedValue, '2026');
+  assert.equal(review.manualRows[0].description, 'Current tax year');
+  assert.equal(review.manualRows[1].suggestedValue, '1226');
 });
 
 test('PDF page range scenario: manual range is required before extraction becomes available', () => {

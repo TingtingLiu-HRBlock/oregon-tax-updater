@@ -181,17 +181,57 @@ function getYearOverYearDateTimeConstants(constants) {
     });
 }
 
+function getYearOverYearNonDateTimeConstants(constants) {
+  if (!Array.isArray(constants)) {
+    throw new Error('Invalid JSON structure: missing Constants array');
+  }
+
+  return constants
+    .map((constant, index) => ({ constant, index }))
+    .filter(({ constant }) => constant?.Maintenance === 'Year Over Year' && constant?.BaseType !== 'DateTime')
+    .map(({ constant, index }) => ({
+      index,
+      uid: constant.Uid || null,
+      name: constant.Name || `Constant ${index + 1}`,
+      description: constant.Description || '',
+      baseType: constant.BaseType || '',
+      value: constant.Value
+    }));
+}
+
+function coerceConstantValue(existingValue, nextValue) {
+  if (typeof existingValue === 'number') {
+    const numericValue = Number(nextValue);
+    if (!Number.isFinite(numericValue)) {
+      throw new Error(`Could not convert "${nextValue}" to a numeric value.`);
+    }
+    return numericValue;
+  }
+
+  if (typeof existingValue === 'boolean') {
+    if (typeof nextValue === 'boolean') return nextValue;
+    const normalized = String(nextValue).trim().toLowerCase();
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
+    throw new Error(`Could not convert "${nextValue}" to a boolean value.`);
+  }
+
+  return String(nextValue);
+}
+
 ipcMain.handle('read-constants-maintenance-file', async (event, filePath) => {
   try {
     const raw = await fs.readFile(filePath, 'utf-8');
     const data = JSON.parse(raw);
-    const matches = getYearOverYearDateTimeConstants(data.Constants);
+    const autoMatches = getYearOverYearDateTimeConstants(data.Constants);
+    const manualMatches = getYearOverYearNonDateTimeConstants(data.Constants);
 
     return {
       success: true,
       taxYear: data.TaxYear || null,
       entity: data.Entity || null,
-      matches
+      autoMatches,
+      manualMatches
     };
   } catch (error) {
     return { success: false, message: error.message };
@@ -221,6 +261,45 @@ ipcMain.handle('apply-constants-year-shift', async (event, payload) => {
     return {
       success: true,
       updatedCount: matches.length
+    };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+});
+
+ipcMain.handle('apply-constants-manual-updates', async (event, payload) => {
+  try {
+    if (!Array.isArray(payload?.updates) || payload.updates.length === 0) {
+      throw new Error('updates must contain at least one manual constants update.');
+    }
+
+    const raw = await fs.readFile(payload.filePath, 'utf-8');
+    const data = JSON.parse(raw);
+    if (!Array.isArray(data.Constants)) {
+      throw new Error('Invalid JSON structure: missing Constants array');
+    }
+
+    let updatedCount = 0;
+    for (const update of payload.updates) {
+      const index = Number(update?.index);
+      if (!Number.isInteger(index) || index < 0 || index >= data.Constants.length) {
+        throw new Error(`Invalid constant index: ${update?.index}`);
+      }
+
+      const constant = data.Constants[index];
+      if (!constant || constant.Maintenance !== 'Year Over Year' || constant.BaseType === 'DateTime') {
+        throw new Error(`Constant at index ${index} is not an editable manual Year Over Year entry.`);
+      }
+
+      constant.Value = coerceConstantValue(constant.Value, update.finalValue);
+      updatedCount++;
+    }
+
+    await fs.writeFile(payload.filePath, JSON.stringify(data, null, 2), 'utf-8');
+
+    return {
+      success: true,
+      updatedCount
     };
   } catch (error) {
     return { success: false, message: error.message };

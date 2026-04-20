@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('api', {
   replaceCoFamilyAffordabilityTable: (payload) => ipcRenderer.invoke('replace-co-family-affordability-table', payload),
   readConstantsMaintenanceFile: (filePath) => ipcRenderer.invoke('read-constants-maintenance-file', filePath),
   applyConstantsYearShift: (payload) => ipcRenderer.invoke('apply-constants-year-shift', payload),
+  applyConstantsManualUpdates: (payload) => ipcRenderer.invoke('apply-constants-manual-updates', payload),
 
   // Export
   exportTextFile: (content) => ipcRenderer.invoke('export-text-file', content),

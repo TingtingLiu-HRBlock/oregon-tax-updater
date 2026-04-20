@@ -56,6 +56,9 @@ let appState = {
   coFamilyAffordabilityReview: null,
   constantsMaintenanceReview: null,
   constantsShiftDeltaYears: 1,
+  constantsMaintenanceUi: {
+    activeTab: 'auto'
+  },
   coFamilyAffordabilityUi: {
     activeTab: 'under5',
     statusFilters: {
@@ -102,6 +105,9 @@ function resetExtractedState() {
   appState.homeownerRefundReview = null;
   appState.coFamilyAffordabilityReview = null;
   appState.constantsMaintenanceReview = null;
+  appState.constantsMaintenanceUi = {
+    activeTab: 'auto'
+  };
   appState.coFamilyAffordabilityUi = {
     activeTab: 'under5',
     statusFilters: {
@@ -201,6 +207,7 @@ function renderWorkflowPicker() {
 
 function renderWorkflowText() {
   const constantsWorkflow = isConstantsMaintenanceWorkflow();
+  const constantsManualTab = constantsWorkflow && appState.constantsMaintenanceUi?.activeTab === 'manual';
   document.getElementById('constantsShiftDirectionSelect').value = String(appState.constantsShiftDeltaYears);
   document.getElementById('sourceSubtitle').textContent = isMarriageCreditWorkflow()
     ? 'Select the Minnesota Schedule M1MA instruction PDF and the page range that contains the marriage-credit table.'
@@ -211,7 +218,7 @@ function renderWorkflowText() {
         : isCoFamilyAffordabilityWorkflow()
           ? 'Select the Colorado DR 0104CN instruction PDF and the page range that contains the Age 5 and Under and Age 6 to 16 credit tables.'
           : constantsWorkflow
-            ? 'Review the state constants JSON for the selected year, then preview all matching Year Over Year DateTime constants before applying the shift.'
+            ? 'Review the state constants JSON for the selected year, then preview both the automatic DateTime updates and the suggested manual year-over-year updates.'
             : 'Select an instruction PDF for the selected state and year.';
   document.getElementById('uploadHint').textContent = isMarriageCreditWorkflow()
     ? 'PDF only - use the page range that contains the marriage-credit table'
@@ -255,7 +262,7 @@ function renderWorkflowText() {
         : isCoFamilyAffordabilityWorkflow()
           ? 'The built-in parser reads both Colorado credit tables and prepares full review grids for each one.'
           : constantsWorkflow
-            ? 'The tool scans the constants file, finds all Year Over Year DateTime values, and shows the proposed +1 or -1 year updates before writing.'
+            ? 'The tool scans the constants file, auto-shifts Year Over Year DateTime values, and proposes editable updates for the other year-over-year constants.'
             : 'The built-in parser reads the selected PDF pages and extracts all income brackets.';
   document.getElementById('updateSectionTitle').textContent = isMarriageCreditWorkflow()
     ? 'Replace Marriage Credit JSON'
@@ -266,7 +273,7 @@ function renderWorkflowText() {
         : isCoFamilyAffordabilityWorkflow()
           ? 'Replace Family Affordability JSON'
           : constantsWorkflow
-            ? 'Apply Year Shift'
+            ? (constantsManualTab ? 'Apply Manual Updates' : 'Apply Year Shift')
             : 'Update JSON Files';
   document.getElementById('updateSectionSubtitle').textContent = isMarriageCreditWorkflow()
     ? 'Writes a full replacement MNMarriageCredit table after you review the extracted grid.'
@@ -277,7 +284,9 @@ function renderWorkflowText() {
         : isCoFamilyAffordabilityWorkflow()
           ? 'Writes full replacement Colorado Family Affordability tables after you review both extracted grids.'
           : constantsWorkflow
-            ? 'Writes the selected +1 or -1 year shift to every matching Year Over Year DateTime constant in the file.'
+            ? (constantsManualTab
+              ? 'Writes the reviewed final values from the manual year-over-year constants tab.'
+              : 'Writes the selected +1 or -1 year shift to every matching Year Over Year DateTime constant in the automatic updates tab.')
             : 'Writes new values to all filing status files. Review the diff above before proceeding.';
   document.getElementById('updateJsonBtn').textContent = isMarriageCreditWorkflow()
     ? 'Replace Marriage Credit JSON'
@@ -288,10 +297,10 @@ function renderWorkflowText() {
         : isCoFamilyAffordabilityWorkflow()
           ? 'Replace Family Affordability JSON'
           : constantsWorkflow
-            ? 'Apply Year Shift'
+            ? (constantsManualTab ? 'Apply Manual Updates' : 'Apply Year Shift')
             : 'Update JSON Files';
   document.getElementById('constantsShiftControls').style.display = constantsWorkflow ? 'flex' : 'none';
-  document.getElementById('constantsShiftHint').textContent = `Applies to all constants marked Year Over Year with BaseType DateTime in the selected file. Current action: ${appState.constantsShiftDeltaYears > 0 ? 'increase year by 1' : 'decrease year by 1'}.`;
+  document.getElementById('constantsShiftHint').textContent = `Auto-updates all Year Over Year DateTime constants and proposes editable values for the other year-over-year constants. Current action: ${appState.constantsShiftDeltaYears > 0 ? 'increase year by 1' : 'decrease year by 1'}.`;
 }
 
 async function onStateChange(stateCode) {
@@ -1328,8 +1337,98 @@ function shiftDateTimeValueByYears(dateValue, deltaYears) {
   ].join('-');
 }
 
+function shiftCompactMonthYear(value, deltaYears) {
+  const match = String(value).trim().match(/^(0[1-9]|1[0-2])(\d{2})$/);
+  if (!match) return null;
+  const shiftedYear = Number(match[2]) + Number(deltaYears);
+  if (shiftedYear < 0 || shiftedYear > 99) return null;
+  return `${match[1]}${String(shiftedYear).padStart(2, '0')}`;
+}
+
+function shiftEmbeddedYearText(value, deltaYears) {
+  const matches = String(value).match(/\b\d{4}\b/g);
+  if (!matches || matches.length !== 1) return null;
+  return String(value).replace(/\b\d{4}\b/, String(Number(matches[0]) + Number(deltaYears)));
+}
+
+function shiftSlashMonthYear(value, deltaYears) {
+  const match = String(value).trim().match(/^(0?[1-9]|1[0-2])\/(\d{2})$/);
+  if (!match) return null;
+  const shiftedYear = Number(match[2]) + Number(deltaYears);
+  if (shiftedYear < 0 || shiftedYear > 99) return null;
+  return `${match[1]}/${String(shiftedYear).padStart(2, '0')}`;
+}
+
+function suggestYearOverYearValue(currentValue, deltaYears) {
+  const text = String(currentValue ?? '').trim();
+  if (!text) {
+    return { suggestedValue: '', suggestionType: 'unknown', confidence: 'low', needsManualReview: true };
+  }
+
+  const compactMonthYear = shiftCompactMonthYear(text, deltaYears);
+  if (compactMonthYear !== null) {
+    return {
+      suggestedValue: compactMonthYear,
+      suggestionType: 'mmyy',
+      confidence: 'high',
+      needsManualReview: false
+    };
+  }
+
+  if (/^\d{4}$/.test(text)) {
+    return {
+      suggestedValue: String(Number(text) + Number(deltaYears)),
+      suggestionType: 'year',
+      confidence: 'high',
+      needsManualReview: false
+    };
+  }
+
+  const slashMonthYear = shiftSlashMonthYear(text, deltaYears);
+  if (slashMonthYear !== null) {
+    return {
+      suggestedValue: slashMonthYear,
+      suggestionType: 'month-year-text',
+      confidence: 'medium',
+      needsManualReview: false
+    };
+  }
+
+  const embeddedYear = shiftEmbeddedYearText(text, deltaYears);
+  if (embeddedYear !== null) {
+    return {
+      suggestedValue: embeddedYear,
+      suggestionType: 'embedded-year',
+      confidence: 'medium',
+      needsManualReview: false
+    };
+  }
+
+  return {
+    suggestedValue: '',
+    suggestionType: 'unknown',
+    confidence: 'low',
+    needsManualReview: true
+  };
+}
+
+function ensureConstantsMaintenanceUiState() {
+  if (!appState.constantsMaintenanceUi) {
+    appState.constantsMaintenanceUi = { activeTab: 'auto' };
+  }
+  if (!appState.constantsMaintenanceUi.activeTab) {
+    appState.constantsMaintenanceUi.activeTab = 'auto';
+  }
+}
+
+function getDefaultConstantsTab(review) {
+  if (review?.autoRows?.length) return 'auto';
+  if (review?.manualRows?.length) return 'manual';
+  return 'auto';
+}
+
 function buildConstantsMaintenanceReview(readResult, deltaYears) {
-  const rows = (readResult?.matches || []).map((entry, index) => {
+  const autoRows = (readResult?.autoMatches || []).map((entry, index) => {
     const currentValue = String(entry.value || '').trim();
     const proposedValue = shiftDateTimeValueByYears(currentValue, deltaYears);
     return {
@@ -1345,9 +1444,27 @@ function buildConstantsMaintenanceReview(readResult, deltaYears) {
     };
   });
 
+  const manualRows = (readResult?.manualMatches || []).map((entry, index) => {
+    const suggestion = suggestYearOverYearValue(entry.value, deltaYears);
+    return {
+      index: Number.isFinite(entry.index) ? entry.index : index,
+      uid: entry.uid || null,
+      name: entry.name || `Constant ${index + 1}`,
+      description: entry.description || '',
+      baseType: entry.baseType || '',
+      currentValue: entry.value === undefined || entry.value === null ? '' : String(entry.value),
+      suggestedValue: suggestion.suggestedValue,
+      finalValue: suggestion.suggestedValue || (entry.value === undefined || entry.value === null ? '' : String(entry.value)),
+      suggestionType: suggestion.suggestionType,
+      confidence: suggestion.confidence,
+      needsManualReview: suggestion.needsManualReview
+    };
+  });
+
   return {
-    rows,
-    matchedCount: rows.length,
+    autoRows,
+    manualRows,
+    matchedCount: autoRows.length + manualRows.length,
     taxYear: readResult?.taxYear || null,
     entity: readResult?.entity || null,
     deltaYears
@@ -1366,11 +1483,13 @@ async function extractData() {
       if (!result.success) throw new Error(result.message);
       updateProgress(70, 'Preparing year-shift preview...');
       appState.constantsMaintenanceReview = buildConstantsMaintenanceReview(result, appState.constantsShiftDeltaYears);
+      appState.constantsMaintenanceUi.activeTab = getDefaultConstantsTab(appState.constantsMaintenanceReview);
       appState.homeownerRefundReview = null;
       appState.marriageCreditReview = null;
       appState.coFamilyAffordabilityReview = null;
       appState.extractedData = null;
       appState.diffResults = null;
+      renderWorkflowText();
       renderExtractedDataSection();
       renderDiffSection();
       renderMarriageCreditSection();
@@ -1604,11 +1723,40 @@ function renderMarriageCreditSection() {
   const container = document.getElementById('marriageCreditSection');
 
   if (isConstantsMaintenanceWorkflow()) {
+    ensureConstantsMaintenanceUiState();
     const review = appState.constantsMaintenanceReview;
-    if (!review?.rows?.length) { container.style.display = 'none'; container.innerHTML = ''; return; }
-    const rowsHtml = review.rows.map((row, index) => `<tr><td>${index + 1}</td><td>${row.name}</td><td>${row.currentValue}</td><td>${row.proposedValue}</td></tr>`).join('');
+    if (!review?.autoRows?.length && !review?.manualRows?.length) { container.style.display = 'none'; container.innerHTML = ''; return; }
+    const autoRowsHtml = review.autoRows.map((row, index) => `<tr><td>${index + 1}</td><td>${row.name}</td><td>${row.currentValue}</td><td>${row.proposedValue}</td></tr>`).join('');
+    const manualRowsHtml = review.manualRows.map((row, index) => `<tr><td>${index + 1}</td><td>${row.name}</td><td>${row.description || '-'}</td><td>${row.baseType || '-'}</td><td>${row.currentValue}</td><td>${row.suggestedValue || '<span class="diff-empty">Needs manual review</span>'}</td><td><input class="text-input constants-manual-input" data-constant-index="${row.index}" value="${String(row.finalValue).replace(/"/g, '&quot;')}" /></td></tr>`).join('');
+    const tabs = [
+      { key: 'auto', label: 'Auto Date Updates', badge: review.autoRows.length },
+      { key: 'manual', label: 'Suggested Manual Updates', badge: review.manualRows.length }
+    ].filter(tab => tab.key === 'auto' ? review.autoRows.length > 0 : review.manualRows.length > 0);
+    const activeTab = tabs.some(tab => tab.key === appState.constantsMaintenanceUi.activeTab)
+      ? appState.constantsMaintenanceUi.activeTab
+      : getDefaultConstantsTab(review);
+    appState.constantsMaintenanceUi.activeTab = activeTab;
+    const tabsHtml = tabs.map(tab => `<button class="diff-tab constants-review-tab ${activeTab === tab.key ? 'active' : ''}" data-constants-tab="${tab.key}">${tab.label}<span class="diff-badge badge-ok">${tab.badge}</span></button>`).join('');
+    const autoPanelHtml = review.autoRows.length > 0
+      ? `<div class="diff-panel constants-review-panel ${activeTab === 'auto' ? 'active' : ''}" id="constants-panel-auto"><div class="content-section"><div class="section-header"><div><h2 class="section-title">Review Automatic Date Updates</h2><p class="section-subtitle">These Year Over Year DateTime constants will be shifted automatically by ${review.deltaYears > 0 ? '+1' : '-1'} year.</p></div></div><div class="diff-table-wrapper marriage-credit-table-wrapper"><table class="diff-table marriage-credit-table"><thead><tr><th>#</th><th>Name</th><th>Current Value</th><th>Proposed Value</th></tr></thead><tbody>${autoRowsHtml}</tbody></table></div></div></div>`
+      : '';
+    const manualPanelHtml = review.manualRows.length > 0
+      ? `<div class="diff-panel constants-review-panel ${activeTab === 'manual' ? 'active' : ''}" id="constants-panel-manual"><div class="content-section"><div class="section-header"><div><h2 class="section-title">Review Suggested Manual Updates</h2><p class="section-subtitle">These Year Over Year constants are not DateTime values. Review the suggested values, use the description for context, and edit them before applying.</p></div></div>${review.manualRows.length === 0 ? '<div class="diff-empty">No manual year-over-year constants were found.</div>' : `<div class="diff-table-wrapper marriage-credit-table-wrapper"><table class="diff-table marriage-credit-table"><thead><tr><th>#</th><th>Name</th><th>Description</th><th>BaseType</th><th>Current Value</th><th>Suggested Value</th><th>Final Value</th></tr></thead><tbody>${manualRowsHtml}</tbody></table></div>`}</div></div>`
+      : '';
     container.style.display = 'block';
-    container.innerHTML = `<div class="content-section"><div class="section-header"><div><h2 class="section-title">Review Constants Year Shift</h2><p class="section-subtitle">All matching Year Over Year DateTime constants in the selected file will be shifted by ${review.deltaYears > 0 ? '+1' : '-1'} year when you apply the update.</p></div></div><div class="diff-summary"><div class="diff-stat"><span class="diff-stat-value">${review.rows.length}</span><span class="diff-stat-label">Matched constants</span></div><div class="diff-stat"><span class="diff-stat-value">${review.deltaYears > 0 ? '+1' : '-1'}</span><span class="diff-stat-label">Year shift</span></div>${review.taxYear ? `<div class="diff-stat"><span class="diff-stat-value">${review.taxYear}</span><span class="diff-stat-label">File tax year</span></div>` : ''}${review.entity ? `<div class="diff-stat"><span class="diff-stat-value">${review.entity}</span><span class="diff-stat-label">Entity</span></div>` : ''}</div><div class="diff-table-wrapper marriage-credit-table-wrapper"><table class="diff-table marriage-credit-table"><thead><tr><th>#</th><th>Name</th><th>Current Value</th><th>Proposed Value</th></tr></thead><tbody>${rowsHtml}</tbody></table></div></div>`;
+    container.innerHTML = `<div class="content-section"><div class="section-header"><div><h2 class="section-title">Review Constants Maintenance</h2><p class="section-subtitle">Preview automatic DateTime updates and the suggested manual year-over-year updates before applying changes to the constants file.</p></div></div><div class="diff-summary"><div class="diff-stat"><span class="diff-stat-value">${review.matchedCount}</span><span class="diff-stat-label">Matched constants</span></div><div class="diff-stat"><span class="diff-stat-value">${review.autoRows.length}</span><span class="diff-stat-label">Auto date updates</span></div><div class="diff-stat"><span class="diff-stat-value">${review.manualRows.length}</span><span class="diff-stat-label">Manual review rows</span></div><div class="diff-stat"><span class="diff-stat-value">${review.deltaYears > 0 ? '+1' : '-1'}</span><span class="diff-stat-label">Year shift</span></div>${review.taxYear ? `<div class="diff-stat"><span class="diff-stat-value">${review.taxYear}</span><span class="diff-stat-label">File tax year</span></div>` : ''}${review.entity ? `<div class="diff-stat"><span class="diff-stat-value">${review.entity}</span><span class="diff-stat-label">Entity</span></div>` : ''}</div>${tabsHtml ? `<div class="diff-tabs constants-review-tabs">${tabsHtml}</div>` : ''}<div class="diff-panels constants-review-panels">${autoPanelHtml}${manualPanelHtml}</div></div>`;
+    container.querySelectorAll('.constants-review-tab').forEach(tab => tab.addEventListener('click', () => {
+      appState.constantsMaintenanceUi.activeTab = tab.dataset.constantsTab;
+      renderWorkflowText();
+      renderMarriageCreditSection();
+      updateActionButtons();
+    }));
+    container.querySelectorAll('.constants-manual-input').forEach(input => input.addEventListener('input', event => {
+      const targetIndex = Number(event.target.dataset.constantIndex);
+      const row = appState.constantsMaintenanceReview?.manualRows?.find(candidate => candidate.index === targetIndex);
+      if (!row) return;
+      row.finalValue = event.target.value;
+    }));
     return;
   }
 
@@ -1701,7 +1849,33 @@ async function applyConstantsMaintenanceYearShift() {
   const filePath = appState.filePaths.CONSTS;
   const review = appState.constantsMaintenanceReview;
   if (!filePath) return showToast('Please configure the state constants JSON path before applying the year shift.', 'error');
-  if (!review?.rows?.length) return showToast('Please preview the constants year shift first.', 'error');
+  if (!review?.autoRows?.length && !review?.manualRows?.length) return showToast('Please preview the constants year shift first.', 'error');
+  ensureConstantsMaintenanceUiState();
+
+  if (appState.constantsMaintenanceUi.activeTab === 'manual') {
+    if (!review.manualRows.length) return showToast('There are no manual year-over-year constants to update.', 'error');
+    setUpdating(true);
+    const result = await window.api.applyConstantsManualUpdates({
+      filePath,
+      updates: review.manualRows.map(row => ({ index: row.index, finalValue: row.finalValue }))
+    });
+    setUpdating(false);
+
+    if (!result.success) return showToast(`Constants update failed: ${result.message}`, 'error');
+
+    const refreshed = await window.api.readConstantsMaintenanceFile(filePath);
+    if (!refreshed.success) return showToast(`Constants update succeeded, but refresh failed: ${refreshed.message}`, 'error');
+    appState.constantsMaintenanceReview = buildConstantsMaintenanceReview(refreshed, appState.constantsShiftDeltaYears);
+    appState.constantsMaintenanceUi.activeTab = review.manualRows.length > 0 ? 'manual' : getDefaultConstantsTab(appState.constantsMaintenanceReview);
+    renderWorkflowText();
+    renderExtractedDataSection();
+    renderMarriageCreditSection();
+    updateActionButtons();
+    showToast(`Updated ${result.updatedCount} manual year-over-year constants.`, 'success');
+    return;
+  }
+
+  if (!review.autoRows.length) return showToast('There are no automatic DateTime year shifts to apply for this file.', 'error');
 
   setUpdating(true);
   const result = await window.api.applyConstantsYearShift({ filePath, deltaYears: appState.constantsShiftDeltaYears });
@@ -1713,10 +1887,12 @@ async function applyConstantsMaintenanceYearShift() {
   if (!refreshed.success) return showToast(`Constants update succeeded, but refresh failed: ${refreshed.message}`, 'error');
 
   appState.constantsMaintenanceReview = buildConstantsMaintenanceReview(refreshed, appState.constantsShiftDeltaYears);
+  appState.constantsMaintenanceUi.activeTab = review.manualRows.length > 0 ? 'auto' : getDefaultConstantsTab(appState.constantsMaintenanceReview);
+  renderWorkflowText();
   renderExtractedDataSection();
   renderMarriageCreditSection();
   updateActionButtons();
-  showToast(`Updated ${result.updatedCount} Year Over Year DateTime constants by ${appState.constantsShiftDeltaYears > 0 ? '+1' : '-1'} year.`, 'success');
+  showToast(`Updated ${result.updatedCount} automatic DateTime constants by ${appState.constantsShiftDeltaYears > 0 ? '+1' : '-1'} year.`, 'success');
 }
 
 async function replaceCoFamilyAffordabilityJson() {
@@ -1806,9 +1982,9 @@ function renderExtractedDataSection() {
   const section = document.getElementById('extractedDataSection');
   if (isConstantsMaintenanceWorkflow()) {
     const review = appState.constantsMaintenanceReview;
-    if (!review?.rows?.length) { section.style.display = 'none'; return; }
+    if (!review?.autoRows?.length && !review?.manualRows?.length) { section.style.display = 'none'; return; }
     section.style.display = 'block';
-    document.getElementById('extractionSummary').innerHTML = `<div class="extraction-stat"><span>${review.rows.length}</span><label>Matched constants</label></div><div class="extraction-stat"><span>${review.deltaYears > 0 ? '+1' : '-1'}</span><label>Year shift</label></div><div class="extraction-stat"><span>${review.taxYear || appState.taxYear}</span><label>File tax year</label></div><div class="extraction-stat"><span>${review.entity || appState.selectedStateCode}</span><label>Entity</label></div>`;
+    document.getElementById('extractionSummary').innerHTML = `<div class="extraction-stat"><span>${review.matchedCount}</span><label>Matched constants</label></div><div class="extraction-stat"><span>${review.autoRows.length}</span><label>Auto date rows</label></div><div class="extraction-stat"><span>${review.manualRows.length}</span><label>Manual review rows</label></div><div class="extraction-stat"><span>${review.deltaYears > 0 ? '+1' : '-1'}</span><label>Year shift</label></div>`;
     return;
   }
   if (isCoFamilyAffordabilityWorkflow()) {
@@ -1883,7 +2059,7 @@ function updateActionButtons() {
       : isCoFamilyAffordabilityWorkflow()
         ? Boolean(appState.coFamilyAffordabilityReview?.under5?.rows?.length && appState.coFamilyAffordabilityReview?.age6to16?.rows?.length)
         : isConstantsMaintenanceWorkflow()
-          ? Boolean(appState.constantsMaintenanceReview?.rows?.length)
+          ? Boolean(appState.constantsMaintenanceReview?.autoRows?.length || appState.constantsMaintenanceReview?.manualRows?.length)
           : Boolean(appState.extractedData);
   document.getElementById('extractBtn').disabled = !hasSource;
   document.getElementById('updateJsonBtn').disabled = !(hasExtracted && allPathsSet);
@@ -1916,15 +2092,23 @@ function bindEvents() {
   document.getElementById('pdfPageEndInput').addEventListener('input', e => { clearToast(); appState.pdfPageRangeOverride.end = e.target.value.trim(); renderSelectedSource(); updateActionButtons(); });
   document.getElementById('constantsShiftDirectionSelect').addEventListener('change', e => {
     appState.constantsShiftDeltaYears = parseInt(e.target.value, 10) === -1 ? -1 : 1;
-    if (appState.constantsMaintenanceReview?.rows?.length) {
+    if (appState.constantsMaintenanceReview?.autoRows?.length || appState.constantsMaintenanceReview?.manualRows?.length) {
       appState.constantsMaintenanceReview = buildConstantsMaintenanceReview({
-        matches: appState.constantsMaintenanceReview.rows.map(row => ({
+        autoMatches: appState.constantsMaintenanceReview.autoRows.map(row => ({
           index: row.index,
           uid: row.uid,
           name: row.name,
           description: row.description,
           value: row.currentValue,
           dataTimeValue: row.currentDataTimeValue
+        })),
+        manualMatches: appState.constantsMaintenanceReview.manualRows.map(row => ({
+          index: row.index,
+          uid: row.uid,
+          name: row.name,
+          description: row.description,
+          baseType: row.baseType,
+          value: row.currentValue
         })),
         taxYear: appState.constantsMaintenanceReview.taxYear,
         entity: appState.constantsMaintenanceReview.entity
@@ -1939,7 +2123,7 @@ function bindEvents() {
   document.getElementById('updateJsonBtn').addEventListener('click', updateJsonFiles);
 }
 
-if (typeof module !== 'undefined' && module.exports) module.exports = { appState, parseIntegerText, groupPdfTextItemsByRow, findNumericItemsInRange, findMinnesotaValueWindow, parseMinnesotaPdfRows, parseMarriageCreditPdfRows, parseMarriageCreditFromFullText, parseHomeownerRefundPageRows, parseRenterRefundPageRows, buildHomeownerRefundTables, buildRenterRefundTables, overlayGenericTableRows, normalizeRefundJsonRows, normalizeHomeownerRefundJsonRows, parseOrPdfRows, parseCoFamilyAffordabilityPageRows, buildCoFamilyReview, normalizeDeterministicRowsToData, mergeExtractedData, sortMarriageCreditRows, buildMarriageCreditReview, buildGenericTableReview, shiftDateTimeValueByYears, buildConstantsMaintenanceReview, getEffectivePdfPageRange, renderSelectedSource, updateActionButtons, showDiffTab };
+if (typeof module !== 'undefined' && module.exports) module.exports = { appState, parseIntegerText, groupPdfTextItemsByRow, findNumericItemsInRange, findMinnesotaValueWindow, parseMinnesotaPdfRows, parseMarriageCreditPdfRows, parseMarriageCreditFromFullText, parseHomeownerRefundPageRows, parseRenterRefundPageRows, buildHomeownerRefundTables, buildRenterRefundTables, overlayGenericTableRows, normalizeRefundJsonRows, normalizeHomeownerRefundJsonRows, parseOrPdfRows, parseCoFamilyAffordabilityPageRows, buildCoFamilyReview, normalizeDeterministicRowsToData, mergeExtractedData, sortMarriageCreditRows, buildMarriageCreditReview, buildGenericTableReview, shiftDateTimeValueByYears, suggestYearOverYearValue, buildConstantsMaintenanceReview, getEffectivePdfPageRange, renderSelectedSource, updateActionButtons, showDiffTab };
 if (typeof window !== 'undefined' && typeof document !== 'undefined') init();
 
 

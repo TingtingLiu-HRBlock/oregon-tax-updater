@@ -27,10 +27,13 @@ Desktop Electron app for extracting state tax table values from official instruc
   - `Increase year by 1`
   - `Decrease year by 1`
 - Review mode:
-  - Full preview of all matching constants before write
+  - Two review tabs before write:
+    - `Auto Date Updates` for `DateTime` constants
+    - `Suggested Manual Updates` for other `Year Over Year` constants
 - Special behavior:
   - No PDF is required for this workflow
-  - Updates both `Value` and `DataTimeValue`
+  - Automatic date updates write both `Value` and `DataTimeValue`
+  - Manual review rows show the constant description, suggested value, and editable final value
 
 ### Oregon
 - Filing statuses:
@@ -184,8 +187,9 @@ This generates a Windows NSIS installer in `dist/` named like `State-Tax-Table-U
 5. Confirm the constants JSON path.
 6. Choose `Increase year by 1` or `Decrease year by 1`.
 7. Click `Preview Year Shift`.
-8. Review all matching `Year Over Year` `DateTime` constants.
-9. Click `Apply Year Shift`.
+8. Review the `Auto Date Updates` tab for matching `Year Over Year` `DateTime` constants.
+9. Review the `Suggested Manual Updates` tab for other `Year Over Year` constants, using the description column to confirm or edit the proposed value.
+10. Click `Apply Year Shift` on the automatic tab or `Apply Manual Updates` on the manual tab.
 
 ## PDF Workflow Notes
 
@@ -195,7 +199,7 @@ This generates a Windows NSIS installer in `dist/` named like `State-Tax-Table-U
 - Review the extracted diffs before updating standard tax-table JSON files.
 - For `M1MA Marriage Credit`, review the full extracted table before replacing the JSON file.
 - For Colorado `Family Affordability Tax Credit`, review both extracted tables before replacing the JSON files.
-- For `Constants Maintenance`, review the proposed date shifts before applying the update.
+- For `Constants Maintenance`, review both the automatic date shifts and the suggested manual values before applying the update.
 
 ## Project Structure
 
