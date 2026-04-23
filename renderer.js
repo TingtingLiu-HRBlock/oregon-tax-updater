@@ -5,6 +5,7 @@ const HOMEOWNER_REFUND_WORKFLOW_KEY = 'm1pr';
 const RENTER_REFUND_WORKFLOW_KEY = 'm1rent';
 const CO_FAMILY_AFFORDABILITY_WORKFLOW_KEY = 'family-affordability';
 const CONSTANTS_MAINTENANCE_WORKFLOW_KEY = 'constants-maintenance';
+const UNIT_TEST_DATE_ROLLER_WORKFLOW_KEY = 'unit-test-date-roller';
 const MARRIAGE_CREDIT_FILE_TARGET = {
   key: 'M1MA',
   label: 'Marriage Credit',
@@ -27,6 +28,11 @@ const CONSTANTS_MAINTENANCE_FILE_TARGET = {
   label: 'State constants JSON',
   fileLabel: 'Consts'
 };
+const UNIT_TEST_DATE_ROLLER_FILE_TARGETS = [
+  { key: 'TEST_ROOT', label: 'Unit test root folder', fileLabel: 'Tests' },
+  { key: 'CALC_ROOT', label: 'Calc root folder', fileLabel: 'Calc' },
+  { key: 'CONSTS', label: 'State constants JSON', fileLabel: 'Consts' }
+];
 const CO_FAMILY_STATUS_ORDER = [
   'FilingStatus.Single',
   'FilingStatus.MarriedFilingJointly',
@@ -55,9 +61,13 @@ let appState = {
   homeownerRefundReview: null,
   coFamilyAffordabilityReview: null,
   constantsMaintenanceReview: null,
+  unitTestDateRollerReview: null,
   constantsShiftDeltaYears: 1,
   constantsMaintenanceUi: {
     activeTab: 'auto'
+  },
+  unitTestDateRollerUi: {
+    activeTab: 'ready'
   },
   coFamilyAffordabilityUi: {
     activeTab: 'under5',
@@ -105,8 +115,12 @@ function resetExtractedState() {
   appState.homeownerRefundReview = null;
   appState.coFamilyAffordabilityReview = null;
   appState.constantsMaintenanceReview = null;
+  appState.unitTestDateRollerReview = null;
   appState.constantsMaintenanceUi = {
     activeTab: 'auto'
+  };
+  appState.unitTestDateRollerUi = {
+    activeTab: 'ready'
   };
   appState.coFamilyAffordabilityUi = {
     activeTab: 'under5',
@@ -135,19 +149,31 @@ function getWorkflowOptions() {
       { key: MARRIAGE_CREDIT_WORKFLOW_KEY, label: 'M1MA Marriage Credit', hint: 'Extract the two-key marriage-credit table, preview the full grid, then replace one JSON file.' },
       { key: HOMEOWNER_REFUND_WORKFLOW_KEY, label: 'M1PR Homeowner Refund', hint: 'Extract the row-table and refund-table grids, review both, then replace two JSON files.' },
       { key: RENTER_REFUND_WORKFLOW_KEY, label: "SchM1RENT Renter's Credit", hint: 'Extract the renter row-table and refund-table grids, review both, then replace two JSON files.' },
-      { key: CONSTANTS_MAINTENANCE_WORKFLOW_KEY, label: 'Constants Maintenance', hint: 'Preview and shift all Year Over Year DateTime constants in the state constants JSON file by +1 or -1 year.' }
+      { key: CONSTANTS_MAINTENANCE_WORKFLOW_KEY, label: 'Constants Maintenance', hint: 'Preview and shift all Year Over Year DateTime constants in the state constants JSON file by +1 or -1 year.' },
+      { key: UNIT_TEST_DATE_ROLLER_WORKFLOW_KEY, label: 'Unit Test Date Roller', hint: 'Preview and shift DateTime and DateTime[] test values under the state unit-test folder by +1 or -1 year.' }
     ];
   }
   if (appState.selectedStateConfig?.code === 'CO') {
     return [
       { key: CO_FAMILY_AFFORDABILITY_WORKFLOW_KEY, label: 'Family Affordability Tax Credit', hint: 'Extract the two Colorado per-child credit tables, review both full grids, then replace both JSON files.' },
-      { key: CONSTANTS_MAINTENANCE_WORKFLOW_KEY, label: 'Constants Maintenance', hint: 'Preview and shift all Year Over Year DateTime constants in the state constants JSON file by +1 or -1 year.' }
+      { key: CONSTANTS_MAINTENANCE_WORKFLOW_KEY, label: 'Constants Maintenance', hint: 'Preview and shift all Year Over Year DateTime constants in the state constants JSON file by +1 or -1 year.' },
+      { key: UNIT_TEST_DATE_ROLLER_WORKFLOW_KEY, label: 'Unit Test Date Roller', hint: 'Preview and shift DateTime and DateTime[] test values under the state unit-test folder by +1 or -1 year.' }
     ];
   }
   return [
     ...options,
-    { key: CONSTANTS_MAINTENANCE_WORKFLOW_KEY, label: 'Constants Maintenance', hint: 'Preview and shift all Year Over Year DateTime constants in the state constants JSON file by +1 or -1 year.' }
+    { key: CONSTANTS_MAINTENANCE_WORKFLOW_KEY, label: 'Constants Maintenance', hint: 'Preview and shift all Year Over Year DateTime constants in the state constants JSON file by +1 or -1 year.' },
+    { key: UNIT_TEST_DATE_ROLLER_WORKFLOW_KEY, label: 'Unit Test Date Roller', hint: 'Preview and shift DateTime and DateTime[] test values under the state unit-test folder by +1 or -1 year.' }
   ];
+}
+
+function normalizeSelectedWorkflowKey(preferredWorkflowKey = appState.selectedWorkflowKey) {
+  const options = getWorkflowOptions();
+  const fallbackWorkflowKey = options[0]?.key || STANDARD_WORKFLOW_KEY;
+  appState.selectedWorkflowKey = options.some(option => option.key === preferredWorkflowKey)
+    ? preferredWorkflowKey
+    : fallbackWorkflowKey;
+  return options;
 }
 
 function isMarriageCreditWorkflow() {
@@ -170,12 +196,17 @@ function isConstantsMaintenanceWorkflow() {
   return appState.selectedWorkflowKey === CONSTANTS_MAINTENANCE_WORKFLOW_KEY;
 }
 
+function isUnitTestDateRollerWorkflow() {
+  return appState.selectedWorkflowKey === UNIT_TEST_DATE_ROLLER_WORKFLOW_KEY;
+}
+
 function getWorkflowStorageKey() {
   if (isMarriageCreditWorkflow()) return MARRIAGE_CREDIT_WORKFLOW_KEY;
   if (isHomeownerRefundWorkflow()) return HOMEOWNER_REFUND_WORKFLOW_KEY;
   if (isRenterRefundWorkflow()) return RENTER_REFUND_WORKFLOW_KEY;
   if (isCoFamilyAffordabilityWorkflow()) return CO_FAMILY_AFFORDABILITY_WORKFLOW_KEY;
   if (isConstantsMaintenanceWorkflow()) return CONSTANTS_MAINTENANCE_WORKFLOW_KEY;
+  if (isUnitTestDateRollerWorkflow()) return UNIT_TEST_DATE_ROLLER_WORKFLOW_KEY;
   return STANDARD_WORKFLOW_KEY;
 }
 
@@ -185,6 +216,7 @@ function getActiveFileTargets() {
   if (isRenterRefundWorkflow()) return RENTER_REFUND_FILE_TARGETS;
   if (isCoFamilyAffordabilityWorkflow()) return CO_FAMILY_AFFORDABILITY_FILE_TARGETS;
   if (isConstantsMaintenanceWorkflow()) return [CONSTANTS_MAINTENANCE_FILE_TARGET];
+  if (isUnitTestDateRollerWorkflow()) return UNIT_TEST_DATE_ROLLER_FILE_TARGETS;
   return appState.selectedStateConfig?.filingStatuses || [];
 }
 
@@ -192,21 +224,23 @@ function renderWorkflowPicker() {
   const group = document.getElementById('workflowGroup');
   const select = document.getElementById('workflowSelect');
   const hint = document.getElementById('workflowHint');
-  const options = getWorkflowOptions();
+  const options = normalizeSelectedWorkflowKey();
   if (options.length <= 1) {
     group.style.display = 'none';
     select.innerHTML = '';
     hint.textContent = '';
-    appState.selectedWorkflowKey = options[0]?.key || STANDARD_WORKFLOW_KEY;
+    select.value = appState.selectedWorkflowKey;
     return;
   }
   group.style.display = 'flex';
   select.innerHTML = options.map(option => `<option value="${option.key}" ${option.key === appState.selectedWorkflowKey ? 'selected' : ''}>${option.label}</option>`).join('');
+  select.value = appState.selectedWorkflowKey;
   hint.textContent = (options.find(option => option.key === appState.selectedWorkflowKey) || options[0]).hint;
 }
 
 function renderWorkflowText() {
   const constantsWorkflow = isConstantsMaintenanceWorkflow();
+  const unitTestWorkflow = isUnitTestDateRollerWorkflow();
   const constantsManualTab = constantsWorkflow && appState.constantsMaintenanceUi?.activeTab === 'manual';
   document.getElementById('constantsShiftDirectionSelect').value = String(appState.constantsShiftDeltaYears);
   document.getElementById('sourceSubtitle').textContent = isMarriageCreditWorkflow()
@@ -217,6 +251,8 @@ function renderWorkflowText() {
         ? 'Select the Minnesota M1 instruction PDF and the page range that contains the renter credit refund tables.'
         : isCoFamilyAffordabilityWorkflow()
           ? 'Select the Colorado DR 0104CN instruction PDF and the page range that contains the Age 5 and Under and Age 6 to 16 credit tables.'
+          : unitTestWorkflow
+            ? 'Review the calc root, matching unit test root, and state constants JSON for the selected year, then preview only the unit tests affected by direct constant-return calcs.'
           : constantsWorkflow
             ? 'Review the state constants JSON for the selected year, then preview both the automatic DateTime updates and the suggested manual year-over-year updates.'
             : 'Select an instruction PDF for the selected state and year.';
@@ -228,6 +264,8 @@ function renderWorkflowText() {
         ? 'PDF only - use the page range that contains the renter credit refund tables'
         : isCoFamilyAffordabilityWorkflow()
           ? 'PDF only - use the page range that contains both Colorado Family Affordability credit tables'
+          : unitTestWorkflow
+            ? 'No PDF required - use the calc root, unit test root, and constants file shown in the JSON Files list'
           : constantsWorkflow
             ? 'No PDF required - use the constants file shown in the JSON Files list'
             : 'PDF only - enter the start and end tax-table pages manually';
@@ -239,6 +277,8 @@ function renderWorkflowText() {
         ? 'Enter the exact PDF pages that contain the renter credit refund tables before extracting.'
         : isCoFamilyAffordabilityWorkflow()
           ? 'Enter the exact PDF pages that contain both Colorado Family Affordability tables before extracting.'
+          : unitTestWorkflow
+            ? 'No PDF page range is needed for the constant-aware unit test updater.'
           : constantsWorkflow
             ? 'No PDF page range is needed for constants maintenance.'
             : 'Enter the exact tax-table pages from the selected PDF before running extraction.';
@@ -250,6 +290,8 @@ function renderWorkflowText() {
         ? 'Extract Renter Refund Tables'
         : isCoFamilyAffordabilityWorkflow()
           ? 'Extract Family Affordability Tables'
+          : unitTestWorkflow
+            ? 'Preview Unit Test Updates'
           : constantsWorkflow
             ? 'Preview Year Shift'
             : 'Extract Data';
@@ -261,6 +303,8 @@ function renderWorkflowText() {
         ? 'The built-in parser reads the M1RENT renter-credit tables and prepares both review tables.'
         : isCoFamilyAffordabilityWorkflow()
           ? 'The built-in parser reads both Colorado credit tables and prepares full review grids for each one.'
+          : unitTestWorkflow
+            ? 'The tool scans calc files for direct constant-return date outputs, matches them to unit tests, and proposes only the expected-value changes implied by the current constants file.'
           : constantsWorkflow
             ? 'The tool scans the constants file, auto-shifts Year Over Year DateTime values, and proposes editable updates for the other year-over-year constants.'
             : 'The built-in parser reads the selected PDF pages and extracts all income brackets.';
@@ -272,6 +316,8 @@ function renderWorkflowText() {
         ? 'Replace Renter Refund JSON'
         : isCoFamilyAffordabilityWorkflow()
           ? 'Replace Family Affordability JSON'
+          : unitTestWorkflow
+            ? 'Apply Unit Test Updates'
           : constantsWorkflow
             ? (constantsManualTab ? 'Apply Manual Updates' : 'Apply Year Shift')
             : 'Update JSON Files';
@@ -283,6 +329,8 @@ function renderWorkflowText() {
         ? 'Writes full replacement M1PR renter row and refund tables after you review both extracted grids.'
         : isCoFamilyAffordabilityWorkflow()
           ? 'Writes full replacement Colorado Family Affordability tables after you review both extracted grids.'
+          : unitTestWorkflow
+            ? 'Writes only the previewed unit test expectation updates that were derived safely from direct constant-return calc dependencies.'
           : constantsWorkflow
             ? (constantsManualTab
               ? 'Writes the reviewed final values from the manual year-over-year constants tab.'
@@ -296,6 +344,8 @@ function renderWorkflowText() {
         ? 'Replace Renter Refund JSON'
         : isCoFamilyAffordabilityWorkflow()
           ? 'Replace Family Affordability JSON'
+          : unitTestWorkflow
+            ? 'Apply Unit Test Updates'
           : constantsWorkflow
             ? (constantsManualTab ? 'Apply Manual Updates' : 'Apply Year Shift')
             : 'Update JSON Files';
@@ -304,13 +354,10 @@ function renderWorkflowText() {
 }
 
 async function onStateChange(stateCode) {
+  const previousWorkflowKey = appState.selectedWorkflowKey;
   appState.selectedStateCode = stateCode;
   appState.selectedStateConfig = await window.api.getStateConfig(stateCode);
-  appState.selectedWorkflowKey = STANDARD_WORKFLOW_KEY;
-  appState.filePaths = {};
-  appState.selectedPdfPath = null;
-  appState.pdfPageRangeOverride = { start: '', end: '' };
-  resetExtractedState();
+  resetWorkflowContext(previousWorkflowKey);
   renderWorkflowPicker();
   renderWorkflowText();
   renderSelectedSource();
@@ -323,9 +370,7 @@ async function onStateChange(stateCode) {
 }
 
 async function onWorkflowChange(workflowKey) {
-  appState.selectedWorkflowKey = workflowKey;
-  appState.filePaths = {};
-  resetExtractedState();
+  resetWorkflowContext(workflowKey);
   renderWorkflowPicker();
   renderWorkflowText();
   renderSelectedSource();
@@ -339,6 +384,14 @@ async function onWorkflowChange(workflowKey) {
 
 async function loadFilePaths() {
   appState.filePaths = await window.api.readJsonFilePaths(appState.selectedStateCode, appState.taxYear, getWorkflowStorageKey()) || {};
+}
+
+function resetWorkflowContext(preferredWorkflowKey = appState.selectedWorkflowKey) {
+  normalizeSelectedWorkflowKey(preferredWorkflowKey);
+  appState.filePaths = {};
+  appState.selectedPdfPath = null;
+  appState.pdfPageRangeOverride = { start: '', end: '' };
+  resetExtractedState();
 }
 
 function renderFilePickers() {
@@ -398,7 +451,7 @@ function renderSelectedSource() {
   const selectPdfBtn = document.getElementById('selectPdfBtn');
   const pdfSection = document.getElementById('pdfSelectionSection');
   const pdfSummary = document.getElementById('pdfSelectionSummary');
-  if (isConstantsMaintenanceWorkflow()) {
+  if (isConstantsMaintenanceWorkflow() || isUnitTestDateRollerWorkflow()) {
     uploadArea.style.display = 'block';
     selectPdfBtn.style.display = 'none';
     pdfSection.style.display = 'none';
@@ -421,6 +474,65 @@ function renderSelectedSource() {
   pdfSection.style.display = 'none';
   pdfSummary.textContent = '';
   syncPdfPageInputs();
+}
+
+function syncWideTableScrollbars(scope = document) {
+  const wrappers = scope.querySelectorAll ? scope.querySelectorAll('.diff-table-wrapper') : [];
+  wrappers.forEach(wrapper => {
+    const table = wrapper.querySelector('table');
+    if (!table) {
+      return;
+    }
+
+    let mirror = wrapper.previousElementSibling;
+    if (!mirror || !mirror.classList?.contains('table-scroll-sync')) {
+      mirror = document.createElement('div');
+      mirror.className = 'table-scroll-sync';
+      mirror.innerHTML = '<div class="table-scroll-sync-inner"></div>';
+      wrapper.parentNode?.insertBefore(mirror, wrapper);
+    }
+
+    const mirrorInner = mirror.firstElementChild;
+    if (!mirrorInner) {
+      return;
+    }
+
+    const hasHorizontalOverflow = wrapper.scrollWidth > wrapper.clientWidth + 1;
+    mirror.classList.toggle('is-visible', hasHorizontalOverflow);
+    mirrorInner.style.width = `${wrapper.scrollWidth}px`;
+
+    if (wrapper.dataset.scrollSyncBound !== 'true') {
+      let syncingFromWrapper = false;
+      let syncingFromMirror = false;
+
+      wrapper.addEventListener('scroll', () => {
+        if (syncingFromMirror) {
+          syncingFromMirror = false;
+          return;
+        }
+        syncingFromWrapper = true;
+        mirror.scrollLeft = wrapper.scrollLeft;
+      });
+
+      mirror.addEventListener('scroll', () => {
+        if (syncingFromWrapper) {
+          syncingFromWrapper = false;
+          return;
+        }
+        syncingFromMirror = true;
+        wrapper.scrollLeft = mirror.scrollLeft;
+      });
+
+      wrapper.dataset.scrollSyncBound = 'true';
+    }
+
+    if (!hasHorizontalOverflow) {
+      wrapper.scrollLeft = 0;
+      mirror.scrollLeft = 0;
+    } else {
+      mirror.scrollLeft = wrapper.scrollLeft;
+    }
+  });
 }
 
 function mergeExtractedData(existing, incoming, config, pageLabel) {
@@ -1351,6 +1463,33 @@ function shiftEmbeddedYearText(value, deltaYears) {
   return String(value).replace(/\b\d{4}\b/, String(Number(matches[0]) + Number(deltaYears)));
 }
 
+function shiftTrailingYearCode(value, deltaYears) {
+  const text = String(value).trim();
+  const match = text.match(/^([A-Za-z][A-Za-z0-9_-]*?)(\d{4})$/);
+  if (!match) return null;
+  return `${match[1]}${String(Number(match[2]) + Number(deltaYears))}`;
+}
+
+function shiftContextualTwoDigitYear(value, deltaYears, context = {}) {
+  const text = String(value ?? '').trim();
+  if (!/^\d{2}$/.test(text)) {
+    return null;
+  }
+
+  const contextText = `${context.name || ''} ${context.description || ''}`.toLowerCase();
+  const looksLikeYearField = /\byear\b/.test(contextText) || /\(yy\)/.test(contextText) || /\byy\b/.test(contextText);
+  if (!looksLikeYearField) {
+    return null;
+  }
+
+  const shiftedYear = Number(text) + Number(deltaYears);
+  if (shiftedYear < 0 || shiftedYear > 99) {
+    return null;
+  }
+
+  return String(shiftedYear).padStart(2, '0');
+}
+
 function shiftSlashMonthYear(value, deltaYears) {
   const match = String(value).trim().match(/^(0?[1-9]|1[0-2])\/(\d{2})$/);
   if (!match) return null;
@@ -1359,7 +1498,112 @@ function shiftSlashMonthYear(value, deltaYears) {
   return `${match[1]}/${String(shiftedYear).padStart(2, '0')}`;
 }
 
-function suggestYearOverYearValue(currentValue, deltaYears) {
+function shiftDateLikeStringByYears(value, deltaYears) {
+  const text = String(value).trim();
+  const patterns = [
+    { regex: /^(\d{4})(\d{2})(\d{2})$/, format: 'compact-iso-date' },
+    { regex: /^(\d{2})(\d{2})(\d{4})$/, format: 'compact-us-date' },
+    { regex: /^(\d{4})-(\d{2})-(\d{2})$/, format: 'iso-date' },
+    { regex: /^(\d{4})-(\d{2})-(\d{2})(T.+)$/, format: 'iso-datetime' },
+    { regex: /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/, format: 'slash-date' },
+    { regex: /^(\d{1,2})-(\d{1,2})-(\d{2})$/, format: 'dash-short-year' },
+    { regex: /^(\d{1,2})\/(\d{1,2})\/(\d{2})$/, format: 'slash-short-year' }
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern.regex);
+    if (!match) {
+      continue;
+    }
+
+    let year;
+    let month;
+    let day;
+    let suffix = '';
+
+    if (pattern.format === 'compact-iso-date') {
+      year = Number(match[1]);
+      month = Number(match[2]);
+      day = Number(match[3]);
+    } else if (pattern.format === 'compact-us-date') {
+      month = Number(match[1]);
+      day = Number(match[2]);
+      year = Number(match[3]);
+    } else if (pattern.format === 'iso-date' || pattern.format === 'iso-datetime') {
+      year = Number(match[1]);
+      month = Number(match[2]);
+      day = Number(match[3]);
+      suffix = pattern.format === 'iso-datetime' ? (match[4] || '') : '';
+    } else if (pattern.format === 'slash-date') {
+      month = Number(match[1]);
+      day = Number(match[2]);
+      year = Number(match[3]);
+    } else {
+      month = Number(match[1]);
+      day = Number(match[2]);
+      year = 2000 + Number(match[3]);
+    }
+
+    const shifted = new Date(Date.UTC(year + Number(deltaYears), month - 1, day));
+    if (
+      shifted.getUTCMonth() !== month - 1
+      || shifted.getUTCDate() !== day
+    ) {
+      continue;
+    }
+
+    if (pattern.format === 'compact-iso-date') {
+      return [
+        String(shifted.getUTCFullYear()).padStart(4, '0'),
+        String(shifted.getUTCMonth() + 1).padStart(2, '0'),
+        String(shifted.getUTCDate()).padStart(2, '0')
+      ].join('');
+    }
+
+    if (pattern.format === 'compact-us-date') {
+      return [
+        String(shifted.getUTCMonth() + 1).padStart(2, '0'),
+        String(shifted.getUTCDate()).padStart(2, '0'),
+        String(shifted.getUTCFullYear()).padStart(4, '0')
+      ].join('');
+    }
+
+    if (pattern.format === 'iso-date') {
+      return [
+        String(shifted.getUTCFullYear()).padStart(4, '0'),
+        String(shifted.getUTCMonth() + 1).padStart(2, '0'),
+        String(shifted.getUTCDate()).padStart(2, '0')
+      ].join('-');
+    }
+
+    if (pattern.format === 'iso-datetime') {
+      return [
+        String(shifted.getUTCFullYear()).padStart(4, '0'),
+        String(shifted.getUTCMonth() + 1).padStart(2, '0'),
+        String(shifted.getUTCDate()).padStart(2, '0')
+      ].join('-') + suffix;
+    }
+
+    if (pattern.format === 'slash-date') {
+      return [
+        String(shifted.getUTCMonth() + 1).padStart(2, '0'),
+        String(shifted.getUTCDate()).padStart(2, '0'),
+        String(shifted.getUTCFullYear()).padStart(4, '0')
+      ].join('/');
+    }
+
+    const separator = pattern.format === 'slash-short-year' ? '/' : '-';
+    return [
+      String(shifted.getUTCMonth() + 1).padStart(2, '0'),
+      String(shifted.getUTCDate()).padStart(2, '0'),
+      String(shifted.getUTCFullYear() % 100).padStart(2, '0')
+    ].join(separator);
+  }
+
+  return null;
+}
+
+function suggestYearOverYearValue(currentValue, deltaYears, context = {}) {
   const text = String(currentValue ?? '').trim();
   if (!text) {
     return { suggestedValue: '', suggestionType: 'unknown', confidence: 'low', needsManualReview: true };
@@ -1394,11 +1638,41 @@ function suggestYearOverYearValue(currentValue, deltaYears) {
     };
   }
 
+  const dateLikeValue = shiftDateLikeStringByYears(text, deltaYears);
+  if (dateLikeValue !== null) {
+    return {
+      suggestedValue: dateLikeValue,
+      suggestionType: 'date-like-string',
+      confidence: 'high',
+      needsManualReview: false
+    };
+  }
+
   const embeddedYear = shiftEmbeddedYearText(text, deltaYears);
   if (embeddedYear !== null) {
     return {
       suggestedValue: embeddedYear,
       suggestionType: 'embedded-year',
+      confidence: 'medium',
+      needsManualReview: false
+    };
+  }
+
+  const trailingYearCode = shiftTrailingYearCode(text, deltaYears);
+  if (trailingYearCode !== null) {
+    return {
+      suggestedValue: trailingYearCode,
+      suggestionType: 'trailing-year-code',
+      confidence: 'medium',
+      needsManualReview: false
+    };
+  }
+
+  const contextualTwoDigitYear = shiftContextualTwoDigitYear(text, deltaYears, context);
+  if (contextualTwoDigitYear !== null) {
+    return {
+      suggestedValue: contextualTwoDigitYear,
+      suggestionType: 'contextual-two-digit-year',
       confidence: 'medium',
       needsManualReview: false
     };
@@ -1427,6 +1701,21 @@ function getDefaultConstantsTab(review) {
   return 'auto';
 }
 
+function ensureUnitTestDateRollerUiState() {
+  if (!appState.unitTestDateRollerUi) {
+    appState.unitTestDateRollerUi = { activeTab: 'ready' };
+  }
+  if (!appState.unitTestDateRollerUi.activeTab) {
+    appState.unitTestDateRollerUi.activeTab = 'ready';
+  }
+}
+
+function getDefaultUnitTestDateRollerTab(review) {
+  if (review?.readyRows?.length) return 'ready';
+  if (review?.manualRows?.length) return 'manual';
+  return 'ready';
+}
+
 function buildConstantsMaintenanceReview(readResult, deltaYears) {
   const autoRows = (readResult?.autoMatches || []).map((entry, index) => {
     const currentValue = String(entry.value || '').trim();
@@ -1445,7 +1734,11 @@ function buildConstantsMaintenanceReview(readResult, deltaYears) {
   });
 
   const manualRows = (readResult?.manualMatches || []).map((entry, index) => {
-    const suggestion = suggestYearOverYearValue(entry.value, deltaYears);
+    const suggestion = suggestYearOverYearValue(entry.value, deltaYears, {
+      name: entry.name,
+      description: entry.description,
+      baseType: entry.baseType
+    });
     return {
       index: Number.isFinite(entry.index) ? entry.index : index,
       uid: entry.uid || null,
@@ -1471,6 +1764,44 @@ function buildConstantsMaintenanceReview(readResult, deltaYears) {
   };
 }
 
+function buildUnitTestDateRollerReview(previewResult) {
+  const rows = (previewResult?.rows || []).map((row, index) => ({
+    index,
+    rowKind: row.rowKind || 'output',
+    filePath: row.filePath,
+    calcFilePath: row.calcFilePath,
+    calcFieldPath: row.calcFieldPath || '',
+    caseName: row.caseName || '-',
+    fieldPath: row.fieldPath || '-',
+    valuePath: row.valuePath,
+    type: row.type || '',
+    tomType: row.tomType || '',
+    currentValue: row.currentValue,
+    proposedValue: row.proposedValue,
+    constantName: row.constantName || '',
+    canApply: row.canApply !== false,
+    reason: row.reason || ''
+  }));
+  const readyRows = rows.filter(row => row.canApply);
+  const manualRows = rows.filter(row => !row.canApply);
+
+  const uniqueFiles = new Set(rows.map(row => row.filePath));
+  const uniqueCases = new Set(rows.map(row => `${row.filePath}::${row.caseName}`));
+  return {
+    rows,
+    readyRows,
+    manualRows,
+    fileCount: previewResult?.fileCount || uniqueFiles.size,
+    caseCount: uniqueCases.size,
+    calcFileCount: previewResult?.calcFileCount || 0,
+    updateCount: previewResult?.updateCount || readyRows.length,
+    reviewCount: previewResult?.reviewCount || manualRows.length,
+    rootPath: previewResult?.rootPath || appState.filePaths.TEST_ROOT || '',
+    calcRootPath: previewResult?.calcRootPath || appState.filePaths.CALC_ROOT || '',
+    constantsPath: previewResult?.constantsPath || appState.filePaths.CONSTS || ''
+  };
+}
+
 async function extractData() {
   clearToast();
   if (isConstantsMaintenanceWorkflow()) {
@@ -1484,6 +1815,7 @@ async function extractData() {
       updateProgress(70, 'Preparing year-shift preview...');
       appState.constantsMaintenanceReview = buildConstantsMaintenanceReview(result, appState.constantsShiftDeltaYears);
       appState.constantsMaintenanceUi.activeTab = getDefaultConstantsTab(appState.constantsMaintenanceReview);
+      appState.unitTestDateRollerReview = null;
       appState.homeownerRefundReview = null;
       appState.marriageCreditReview = null;
       appState.coFamilyAffordabilityReview = null;
@@ -1500,6 +1832,42 @@ async function extractData() {
       setExtracting(false);
       showToast(`Preview failed: ${error.message}`, 'error');
       console.error('Constants maintenance preview error:', error);
+      return;
+    }
+  }
+  if (isUnitTestDateRollerWorkflow()) {
+    const rootPath = appState.filePaths.TEST_ROOT;
+    const calcRootPath = appState.filePaths.CALC_ROOT;
+    const constantsPath = appState.filePaths.CONSTS;
+    if (!rootPath || !calcRootPath || !constantsPath) return showToast('Please configure the unit test root, calc root, and constants path first.', 'error');
+    setExtracting(true);
+    try {
+      updateProgress(10, 'Scanning calc and unit test folders...');
+      const result = await window.api.previewUnitTestDateRoll({
+        rootPath,
+        calcRootPath,
+        constantsPath
+      });
+      if (!result.success) throw new Error(result.message);
+      updateProgress(70, 'Preparing constant-aware unit test preview...');
+      appState.unitTestDateRollerReview = buildUnitTestDateRollerReview(result);
+      appState.constantsMaintenanceReview = null;
+      appState.homeownerRefundReview = null;
+      appState.marriageCreditReview = null;
+      appState.coFamilyAffordabilityReview = null;
+      appState.extractedData = null;
+      appState.diffResults = null;
+      renderWorkflowText();
+      renderExtractedDataSection();
+      renderDiffSection();
+      renderMarriageCreditSection();
+      updateActionButtons();
+      updateProgress(100, 'Complete!');
+      return setTimeout(() => setExtracting(false), 400);
+    } catch (error) {
+      setExtracting(false);
+      showToast(`Preview failed: ${error.message}`, 'error');
+      console.error('Unit test date roller preview error:', error);
       return;
     }
   }
@@ -1638,7 +2006,7 @@ async function buildDiff() {
 function renderDiffSection() {
   const container = document.getElementById('diffSection');
   const config = appState.selectedStateConfig;
-  if (isMarriageCreditWorkflow() || isHomeownerRefundWorkflow() || isRenterRefundWorkflow() || isConstantsMaintenanceWorkflow() || !appState.diffResults || !config) { container.style.display = 'none'; return; }
+  if (isMarriageCreditWorkflow() || isHomeownerRefundWorkflow() || isRenterRefundWorkflow() || isConstantsMaintenanceWorkflow() || isUnitTestDateRollerWorkflow() || !appState.diffResults || !config) { container.style.display = 'none'; return; }
   container.style.display = 'block';
   const tabsHtml = config.filingStatuses.map((status, i) => {
     const diff = appState.diffResults[status.key];
@@ -1651,6 +2019,7 @@ function renderDiffSection() {
   const panelsHtml = config.filingStatuses.map((status, i) => `<div class="diff-panel ${i === 0 ? 'active' : ''}" id="diff-panel-${status.key}">${renderDiffPanel(status, appState.diffResults[status.key])}</div>`).join('');
   container.innerHTML = `<div class="section-header"><h2 class="section-title">Review Changes</h2><p class="section-subtitle">Only rows with changed values are shown. Verify before updating.</p></div><div class="diff-tabs">${tabsHtml}</div><div class="diff-panels">${panelsHtml}</div>`;
   container.querySelectorAll('.diff-tab').forEach(tab => tab.addEventListener('click', () => showDiffTab(tab.dataset.statusKey)));
+  syncWideTableScrollbars(container);
 }
 
 function renderDiffPanel(status, diff) {
@@ -1722,6 +2091,59 @@ function renderHomeownerRefundReviewTable(review, options) {
 function renderMarriageCreditSection() {
   const container = document.getElementById('marriageCreditSection');
 
+  if (isUnitTestDateRollerWorkflow()) {
+    ensureUnitTestDateRollerUiState();
+    const review = appState.unitTestDateRollerReview;
+    if (!review?.rows?.length) { container.style.display = 'none'; container.innerHTML = ''; return; }
+    const tabs = [
+      { key: 'ready', label: 'Ready for Update', badge: review.readyRows.length, badgeClass: 'badge-ok' },
+      { key: 'manual', label: 'Needs Manual Review', badge: review.manualRows.length, badgeClass: review.manualRows.length > 0 ? 'badge-warn' : 'badge-ok' }
+    ].filter(tab => tab.key === 'ready' ? review.readyRows.length > 0 : review.manualRows.length > 0);
+    const activeTab = tabs.some(tab => tab.key === appState.unitTestDateRollerUi.activeTab)
+      ? appState.unitTestDateRollerUi.activeTab
+      : getDefaultUnitTestDateRollerTab(review);
+    appState.unitTestDateRollerUi.activeTab = activeTab;
+    const tabsHtml = tabs.map(tab => `<button class="diff-tab unit-test-review-tab ${activeTab === tab.key ? 'active' : ''}" data-unit-test-tab="${tab.key}">${tab.label}<span class="diff-badge ${tab.badgeClass}">${tab.badge}</span></button>`).join('');
+    const renderUnitTestRows = (rows, emptyMessage) => {
+      if (!rows.length) {
+        return `<div class="diff-empty">${emptyMessage}</div>`;
+      }
+      const groups = new Map();
+      rows.forEach(row => {
+        const key = `${row.filePath}::${row.caseName}`;
+        if (!groups.has(key)) {
+          groups.set(key, {
+            filePath: row.filePath,
+            calcFieldPath: row.calcFieldPath || '-',
+            caseName: row.caseName || '-',
+            rows: []
+          });
+        }
+        groups.get(key).rows.push(row);
+      });
+      const groupCardsHtml = Array.from(groups.values()).map((group, groupIndex) => {
+        const itemRowsHtml = group.rows.map((row, rowIndex) => `<tr><td>${rowIndex + 1}</td><td>${row.rowKind === 'input' ? 'Input' : 'Output'}</td><td>${row.fieldPath}</td><td>${row.constantName || '-'}</td><td>${Array.isArray(row.currentValue) ? JSON.stringify(row.currentValue) : row.currentValue}</td><td>${row.canApply ? (Array.isArray(row.proposedValue) ? JSON.stringify(row.proposedValue) : row.proposedValue) : '<span class="diff-empty">Needs manual review</span>'}</td><td>${row.canApply ? '<span class="diff-badge badge-ok">Ready</span>' : `<span class="diff-badge badge-warn" title="${row.reason.replace(/"/g, '&quot;')}">Manual review</span>`}</td></tr>`).join('');
+        return `<div class="unit-test-review-group"><div class="unit-test-review-group-header"><div><h3 class="unit-test-review-group-title">Case ${groupIndex + 1}: ${group.caseName}</h3><p class="unit-test-review-group-subtitle">Calc Field Path: ${group.calcFieldPath}</p></div><div class="unit-test-review-group-meta"><span class="diff-badge ${group.rows.every(row => row.canApply) ? 'badge-ok' : 'badge-warn'}">${group.rows.length} ${group.rows.length === 1 ? 'row' : 'rows'}</span></div></div><div class="diff-table-wrapper marriage-credit-table-wrapper"><table class="diff-table marriage-credit-table"><thead><tr><th>#</th><th>Target</th><th>Field Path</th><th>Constant</th><th>Current Value</th><th>Proposed Value</th><th>Status</th></tr></thead><tbody>${itemRowsHtml}</tbody></table></div></div>`;
+      }).join('');
+      return `<div class="unit-test-review-groups">${groupCardsHtml}</div>`;
+    };
+    const readyPanelHtml = review.readyRows.length > 0
+      ? `<div class="diff-panel unit-test-review-panel ${activeTab === 'ready' ? 'active' : ''}" id="unit-test-panel-ready"><div class="content-section"><div class="section-header"><div><h2 class="section-title">Ready Unit Test Updates</h2><p class="section-subtitle">These rows were resolved from maintained-constant dependencies and can be written back automatically.</p></div></div>${renderUnitTestRows(review.readyRows, 'No unit test rows are ready for automatic update.')}</div></div>`
+      : '';
+    const manualPanelHtml = review.manualRows.length > 0
+      ? `<div class="diff-panel unit-test-review-panel ${activeTab === 'manual' ? 'active' : ''}" id="unit-test-panel-manual"><div class="content-section"><div class="section-header"><div><h2 class="section-title">Unit Tests Needing Manual Review</h2><p class="section-subtitle">These rows could not be updated safely from maintained-constant comparisons alone, so they are shown here for inspection only.</p></div></div>${renderUnitTestRows(review.manualRows, 'No unit test rows need manual review.')}</div></div>`
+      : '';
+    container.style.display = 'block';
+    container.innerHTML = `<div class="content-section"><div class="section-header"><div><h2 class="section-title">Review Unit Test Constant Updates</h2><p class="section-subtitle">These rows were derived from calc files that return, branch to, or compare against maintained constants. Applying will write only the ready rows back into each matching test JSON file.</p></div></div><div class="diff-summary"><div class="diff-stat"><span class="diff-stat-value">${review.calcFileCount}</span><span class="diff-stat-label">Calc files scanned</span></div><div class="diff-stat"><span class="diff-stat-value">${review.fileCount}</span><span class="diff-stat-label">Matched test files</span></div><div class="diff-stat"><span class="diff-stat-value">${review.caseCount}</span><span class="diff-stat-label">Impacted cases</span></div><div class="diff-stat"><span class="diff-stat-value ${review.updateCount > 0 ? 'ok' : 'ok'}">${review.updateCount}</span><span class="diff-stat-label">Ready updates</span></div><div class="diff-stat"><span class="diff-stat-value ${review.reviewCount > 0 ? 'warn' : 'ok'}">${review.reviewCount}</span><span class="diff-stat-label">Manual review rows</span></div></div>${tabsHtml ? `<div class="diff-tabs unit-test-review-tabs">${tabsHtml}</div>` : ''}<div class="diff-panels unit-test-review-panels">${readyPanelHtml}${manualPanelHtml}</div></div>`;
+    container.querySelectorAll('.unit-test-review-tab').forEach(tab => tab.addEventListener('click', () => {
+      appState.unitTestDateRollerUi.activeTab = tab.dataset.unitTestTab;
+      renderMarriageCreditSection();
+      updateActionButtons();
+    }));
+    syncWideTableScrollbars(container);
+    return;
+  }
+
   if (isConstantsMaintenanceWorkflow()) {
     ensureConstantsMaintenanceUiState();
     const review = appState.constantsMaintenanceReview;
@@ -1757,6 +2179,7 @@ function renderMarriageCreditSection() {
       if (!row) return;
       row.finalValue = event.target.value;
     }));
+    syncWideTableScrollbars(container);
     return;
   }
 
@@ -1798,6 +2221,7 @@ function renderMarriageCreditSection() {
       appState.homeownerRefundUi.statusFilters[event.target.dataset.filterKey] = event.target.value;
       renderMarriageCreditSection();
     }));
+    syncWideTableScrollbars(container);
     return;
   }
 
@@ -1820,6 +2244,7 @@ function renderMarriageCreditSection() {
       appState.coFamilyAffordabilityUi.statusFilters[event.target.dataset.filterKey] = event.target.value;
       renderMarriageCreditSection();
     }));
+    syncWideTableScrollbars(container);
     return;
   }
 
@@ -1829,8 +2254,10 @@ function renderMarriageCreditSection() {
   const rowsHtml = review.rows.map((row, index) => `<tr><td>${index + 1}</td><td>${row.separateIncome.toLocaleString()}</td><td>${row.jointIncome.toLocaleString()}</td><td>${row.value.toLocaleString()}</td><td><span class="diff-badge ${getMarriageCreditStatusClass(row)}">${getMarriageCreditStatusLabel(row)}</span></td></tr>`).join('');
   container.style.display = 'block';
   container.innerHTML = `<div class="content-section"><div class="section-header"><div><h2 class="section-title">Review Marriage Credit Table</h2><p class="section-subtitle">Full extracted grid for MN Schedule M1MA. Approve this preview before replacing the JSON file.</p></div></div>${warningHtml}<div class="diff-summary"><div class="diff-stat"><span class="diff-stat-value">${review.rows.length}</span><span class="diff-stat-label">Preview rows</span></div><div class="diff-stat"><span class="diff-stat-value ok">${review.extractedCount}</span><span class="diff-stat-label">Extracted from PDF</span></div><div class="diff-stat"><span class="diff-stat-value ${review.carriedCount > 0 ? 'warn' : 'ok'}">${review.carriedCount}</span><span class="diff-stat-label">Carried from file</span></div><div class="diff-stat"><span class="diff-stat-value ${review.changedCount > 0 ? 'changed' : 'ok'}">${review.changedCount}</span><span class="diff-stat-label">Changed vs file</span></div><div class="diff-stat"><span class="diff-stat-value ok">${review.unchangedCount}</span><span class="diff-stat-label">Unchanged vs file</span></div><div class="diff-stat"><span class="diff-stat-value ${review.missingCount > 0 ? 'warn' : 'ok'}">${review.missingCount}</span><span class="diff-stat-label">Still missing</span></div>${review.currentYear ? `<div class="diff-stat"><span class="diff-stat-value">${review.currentYear} -> ${appState.taxYear}</span><span class="diff-stat-label">Year update</span></div>` : ''}</div><div class="diff-table-wrapper marriage-credit-table-wrapper"><table class="diff-table marriage-credit-table"><thead><tr><th>#</th><th>MNAmtDec (SeparateIncome)</th><th>MNAmtDecNN (JointIncome)</th><th>Value</th><th>Status</th></tr></thead><tbody>${rowsHtml}</tbody></table></div></div>`;
+  syncWideTableScrollbars(container);
 }
 async function updateJsonFiles() {
+  if (isUnitTestDateRollerWorkflow()) return applyUnitTestDateRoller();
   if (isConstantsMaintenanceWorkflow()) return applyConstantsMaintenanceYearShift();
   if (isMarriageCreditWorkflow()) return replaceMarriageCreditJson();
   if (isHomeownerRefundWorkflow() || isRenterRefundWorkflow()) return replaceRefundJson();
@@ -1843,6 +2270,44 @@ async function updateJsonFiles() {
   if (results.every(r => r.success)) { showToast(`All ${results.length} JSON files updated successfully for tax year ${appState.taxYear}.`, 'success'); return buildDiff(); }
   showToast(`Some files failed to update:
 ${results.filter(r => !r.success).map(f => `${f.statusKey}: ${f.message}`).join('\n')}`, 'error');
+}
+
+async function applyUnitTestDateRoller() {
+  const rootPath = appState.filePaths.TEST_ROOT;
+  const calcRootPath = appState.filePaths.CALC_ROOT;
+  const constantsPath = appState.filePaths.CONSTS;
+  const review = appState.unitTestDateRollerReview;
+  if (!rootPath || !calcRootPath || !constantsPath) return showToast('Please configure the unit test root, calc root, and constants path before applying updates.', 'error');
+  if (!review?.rows?.length) return showToast('Please preview the unit test updates first.', 'error');
+  if (!review.rows.some(row => row.canApply)) return showToast('There are no unit test rows eligible for automatic update.', 'error');
+
+  setUpdating(true);
+  const result = await window.api.applyUnitTestDateRoll({
+    rootPath,
+    rows: review.rows.map(row => ({
+      filePath: row.filePath,
+      valuePath: row.valuePath,
+      proposedValue: row.proposedValue,
+      canApply: row.canApply
+    }))
+  });
+  setUpdating(false);
+
+  if (!result.success) return showToast(`Unit test update failed: ${result.message}`, 'error');
+
+  const refreshed = await window.api.previewUnitTestDateRoll({
+    rootPath,
+    calcRootPath,
+    constantsPath
+  });
+  if (!refreshed.success) return showToast(`Unit test update succeeded, but refresh failed: ${refreshed.message}`, 'error');
+
+  appState.unitTestDateRollerReview = buildUnitTestDateRollerReview(refreshed);
+  renderWorkflowText();
+  renderExtractedDataSection();
+  renderMarriageCreditSection();
+  updateActionButtons();
+  showToast(`Updated ${result.updatedValueCount} unit test values across ${result.updatedFileCount} files.`, 'success');
 }
 
 async function applyConstantsMaintenanceYearShift() {
@@ -1980,6 +2445,13 @@ async function replaceRefundJson() {
 
 function renderExtractedDataSection() {
   const section = document.getElementById('extractedDataSection');
+  if (isUnitTestDateRollerWorkflow()) {
+    const review = appState.unitTestDateRollerReview;
+    if (!review?.rows?.length) { section.style.display = 'none'; return; }
+    section.style.display = 'block';
+    document.getElementById('extractionSummary').innerHTML = `<div class="extraction-stat"><span>${review.calcFileCount}</span><label>Calc files scanned</label></div><div class="extraction-stat"><span>${review.fileCount}</span><label>Matched test files</label></div><div class="extraction-stat"><span>${review.updateCount}</span><label>Ready updates</label></div><div class="extraction-stat"><span>${review.reviewCount}</span><label>Manual review rows</label></div><div class="extraction-stat"><span>${appState.taxYear}</span><label>Tax year</label></div>`;
+    return;
+  }
   if (isConstantsMaintenanceWorkflow()) {
     const review = appState.constantsMaintenanceReview;
     if (!review?.autoRows?.length && !review?.manualRows?.length) { section.style.display = 'none'; return; }
@@ -2029,8 +2501,8 @@ function renderExtractedDataSection() {
 function setExtracting(active) {
   document.getElementById('extractBtn').disabled = active;
   document.getElementById('extractBtn').textContent = active
-    ? (isMarriageCreditWorkflow() ? 'Extracting Marriage Credit...' : isHomeownerRefundWorkflow() ? 'Extracting Homeowner Refund...' : isRenterRefundWorkflow() ? 'Extracting Renter Refund...' : isCoFamilyAffordabilityWorkflow() ? 'Extracting Family Affordability...' : isConstantsMaintenanceWorkflow() ? 'Preparing Preview...' : 'Extracting...')
-    : (isMarriageCreditWorkflow() ? 'Extract Marriage Credit Table' : isHomeownerRefundWorkflow() ? 'Extract Homeowner Refund Tables' : isRenterRefundWorkflow() ? 'Extract Renter Refund Tables' : isCoFamilyAffordabilityWorkflow() ? 'Extract Family Affordability Tables' : isConstantsMaintenanceWorkflow() ? 'Preview Year Shift' : 'Extract Data from PDF');
+    ? (isMarriageCreditWorkflow() ? 'Extracting Marriage Credit...' : isHomeownerRefundWorkflow() ? 'Extracting Homeowner Refund...' : isRenterRefundWorkflow() ? 'Extracting Renter Refund...' : isCoFamilyAffordabilityWorkflow() ? 'Extracting Family Affordability...' : isUnitTestDateRollerWorkflow() ? 'Preparing Preview...' : isConstantsMaintenanceWorkflow() ? 'Preparing Preview...' : 'Extracting...')
+    : (isMarriageCreditWorkflow() ? 'Extract Marriage Credit Table' : isHomeownerRefundWorkflow() ? 'Extract Homeowner Refund Tables' : isRenterRefundWorkflow() ? 'Extract Renter Refund Tables' : isCoFamilyAffordabilityWorkflow() ? 'Extract Family Affordability Tables' : isUnitTestDateRollerWorkflow() ? 'Preview Unit Test Updates' : isConstantsMaintenanceWorkflow() ? 'Preview Year Shift' : 'Extract Data from PDF');
   document.getElementById('extractionProgress').style.display = active ? 'block' : 'none';
   if (!active) updateProgress(0, '');
 }
@@ -2038,8 +2510,8 @@ function setExtracting(active) {
 function setUpdating(active) {
   document.getElementById('updateJsonBtn').disabled = active;
   document.getElementById('updateJsonBtn').textContent = active
-    ? (isMarriageCreditWorkflow() || isHomeownerRefundWorkflow() || isRenterRefundWorkflow() || isCoFamilyAffordabilityWorkflow() ? 'Replacing...' : isConstantsMaintenanceWorkflow() ? 'Applying Year Shift...' : 'Updating...')
-    : (isMarriageCreditWorkflow() ? 'Replace Marriage Credit JSON' : isHomeownerRefundWorkflow() ? 'Replace Homeowner Refund JSON' : isRenterRefundWorkflow() ? 'Replace Renter Refund JSON' : isCoFamilyAffordabilityWorkflow() ? 'Replace Family Affordability JSON' : isConstantsMaintenanceWorkflow() ? 'Apply Year Shift' : 'Update JSON Files');
+    ? (isMarriageCreditWorkflow() || isHomeownerRefundWorkflow() || isRenterRefundWorkflow() || isCoFamilyAffordabilityWorkflow() ? 'Replacing...' : isUnitTestDateRollerWorkflow() ? 'Applying Unit Test Updates...' : isConstantsMaintenanceWorkflow() ? 'Applying Year Shift...' : 'Updating...')
+    : (isMarriageCreditWorkflow() ? 'Replace Marriage Credit JSON' : isHomeownerRefundWorkflow() ? 'Replace Homeowner Refund JSON' : isRenterRefundWorkflow() ? 'Replace Renter Refund JSON' : isCoFamilyAffordabilityWorkflow() ? 'Replace Family Affordability JSON' : isUnitTestDateRollerWorkflow() ? 'Apply Unit Test Updates' : isConstantsMaintenanceWorkflow() ? 'Apply Year Shift' : 'Update JSON Files');
 }
 
 function updateProgress(pct, msg) {
@@ -2048,9 +2520,11 @@ function updateProgress(pct, msg) {
 }
 
 function updateActionButtons() {
-  const hasSource = isConstantsMaintenanceWorkflow()
-    ? Boolean(appState.filePaths.CONSTS)
-    : Boolean(appState.selectedPdfPath) && Boolean(getEffectivePdfPageRange());
+  const hasSource = isUnitTestDateRollerWorkflow()
+    ? Boolean(appState.filePaths.TEST_ROOT && appState.filePaths.CALC_ROOT && appState.filePaths.CONSTS)
+    : isConstantsMaintenanceWorkflow()
+      ? Boolean(appState.filePaths.CONSTS)
+      : Boolean(appState.selectedPdfPath) && Boolean(getEffectivePdfPageRange());
   const allPathsSet = getActiveFileTargets().length > 0 && getActiveFileTargets().every(target => appState.filePaths[target.key]);
   const hasExtracted = isMarriageCreditWorkflow()
     ? Boolean(appState.marriageCreditReview?.rows?.length)
@@ -2058,6 +2532,8 @@ function updateActionButtons() {
       ? Boolean(appState.homeownerRefundReview?.rowTable?.rows?.length && appState.homeownerRefundReview?.refundTable?.rows?.length)
       : isCoFamilyAffordabilityWorkflow()
         ? Boolean(appState.coFamilyAffordabilityReview?.under5?.rows?.length && appState.coFamilyAffordabilityReview?.age6to16?.rows?.length)
+        : isUnitTestDateRollerWorkflow()
+          ? Boolean(appState.unitTestDateRollerReview?.updateCount)
         : isConstantsMaintenanceWorkflow()
           ? Boolean(appState.constantsMaintenanceReview?.autoRows?.length || appState.constantsMaintenanceReview?.manualRows?.length)
           : Boolean(appState.extractedData);
@@ -2084,13 +2560,13 @@ function showToast(message, type = 'info') {
 function bindEvents() {
   document.getElementById('stateSelect').addEventListener('change', e => onStateChange(e.target.value));
   document.getElementById('taxYearSelect').addEventListener('change', async e => {
-    appState.taxYear = parseInt(e.target.value, 10); appState.filePaths = {}; resetExtractedState(); renderSelectedSource(); await loadFilePaths(); renderFilePickers(); renderExtractedDataSection(); renderDiffSection(); renderMarriageCreditSection(); updateActionButtons();
+    appState.taxYear = parseInt(e.target.value, 10); resetWorkflowContext(); renderSelectedSource(); await loadFilePaths(); renderFilePickers(); renderExtractedDataSection(); renderDiffSection(); renderMarriageCreditSection(); updateActionButtons();
   });
   document.getElementById('workflowSelect').addEventListener('change', e => onWorkflowChange(e.target.value));
   document.getElementById('selectPdfBtn').addEventListener('click', selectPdf);
   document.getElementById('pdfPageStartInput').addEventListener('input', e => { clearToast(); appState.pdfPageRangeOverride.start = e.target.value.trim(); renderSelectedSource(); updateActionButtons(); });
   document.getElementById('pdfPageEndInput').addEventListener('input', e => { clearToast(); appState.pdfPageRangeOverride.end = e.target.value.trim(); renderSelectedSource(); updateActionButtons(); });
-  document.getElementById('constantsShiftDirectionSelect').addEventListener('change', e => {
+  document.getElementById('constantsShiftDirectionSelect').addEventListener('change', async e => {
     appState.constantsShiftDeltaYears = parseInt(e.target.value, 10) === -1 ? -1 : 1;
     if (appState.constantsMaintenanceReview?.autoRows?.length || appState.constantsMaintenanceReview?.manualRows?.length) {
       appState.constantsMaintenanceReview = buildConstantsMaintenanceReview({
@@ -2123,7 +2599,7 @@ function bindEvents() {
   document.getElementById('updateJsonBtn').addEventListener('click', updateJsonFiles);
 }
 
-if (typeof module !== 'undefined' && module.exports) module.exports = { appState, parseIntegerText, groupPdfTextItemsByRow, findNumericItemsInRange, findMinnesotaValueWindow, parseMinnesotaPdfRows, parseMarriageCreditPdfRows, parseMarriageCreditFromFullText, parseHomeownerRefundPageRows, parseRenterRefundPageRows, buildHomeownerRefundTables, buildRenterRefundTables, overlayGenericTableRows, normalizeRefundJsonRows, normalizeHomeownerRefundJsonRows, parseOrPdfRows, parseCoFamilyAffordabilityPageRows, buildCoFamilyReview, normalizeDeterministicRowsToData, mergeExtractedData, sortMarriageCreditRows, buildMarriageCreditReview, buildGenericTableReview, shiftDateTimeValueByYears, suggestYearOverYearValue, buildConstantsMaintenanceReview, getEffectivePdfPageRange, renderSelectedSource, updateActionButtons, showDiffTab };
+if (typeof module !== 'undefined' && module.exports) module.exports = { appState, parseIntegerText, groupPdfTextItemsByRow, findNumericItemsInRange, findMinnesotaValueWindow, parseMinnesotaPdfRows, parseMarriageCreditPdfRows, parseMarriageCreditFromFullText, parseHomeownerRefundPageRows, parseRenterRefundPageRows, buildHomeownerRefundTables, buildRenterRefundTables, overlayGenericTableRows, normalizeRefundJsonRows, normalizeHomeownerRefundJsonRows, parseOrPdfRows, parseCoFamilyAffordabilityPageRows, buildCoFamilyReview, normalizeDeterministicRowsToData, mergeExtractedData, sortMarriageCreditRows, buildMarriageCreditReview, buildGenericTableReview, shiftDateTimeValueByYears, suggestYearOverYearValue, buildConstantsMaintenanceReview, buildUnitTestDateRollerReview, getEffectivePdfPageRange, renderSelectedSource, renderMarriageCreditSection, updateActionButtons, showDiffTab, resetWorkflowContext };
 if (typeof window !== 'undefined' && typeof document !== 'undefined') init();
 
 

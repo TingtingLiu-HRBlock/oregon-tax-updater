@@ -11,7 +11,9 @@ const {
   getRenterRefundCanonicalPath,
   getCoFamilyAffordabilityUnder5CanonicalPath,
   getCoFamilyAffordabilityAge6To16CanonicalPath,
-  getConstsCanonicalPath
+  getConstsCanonicalPath,
+  getCalcCanonicalPath,
+  getUnitTestCalcCanonicalPath
 } = require('../pathUtils');
 
 test('MN M1MA path regression: default path points to TaxEngine marriage credit JSON', () => {
@@ -75,4 +77,14 @@ test('Generic constants-maintenance path regression: Alabama constants path foll
   const paths = buildDefaultPaths('AL', 2026, 'constants-maintenance');
 
   assert.equal(paths.CONSTS, getConstsCanonicalPath('AL', 2026));
+});
+
+test('Unit test date roller path regression: default calc, test, and constants paths follow the shared state-code pattern', () => {
+  const paths = buildDefaultPaths('CO', 2025, 'unit-test-date-roller');
+
+  assert.equal(paths.TEST_ROOT, getUnitTestCalcCanonicalPath('CO', 2025));
+  assert.equal(paths.CALC_ROOT, getCalcCanonicalPath('CO', 2025));
+  assert.equal(paths.CONSTS, getConstsCanonicalPath('CO', 2025));
+  assert.equal(paths.TEST_ROOT, String.raw`C:\TaxEngine\OCE-Regulatory-2025\Source\CO\Tests\Unit\Calc`);
+  assert.equal(paths.CALC_ROOT, String.raw`C:\TaxEngine\OCE-Regulatory-2025\Source\CO\Calc`);
 });

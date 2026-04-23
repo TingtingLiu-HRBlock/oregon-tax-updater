@@ -22,16 +22,20 @@ const {
   shiftDateTimeValueByYears,
   suggestYearOverYearValue,
   buildConstantsMaintenanceReview,
+  buildUnitTestDateRollerReview,
   normalizeDeterministicRowsToData,
   getEffectivePdfPageRange,
   renderSelectedSource,
+  renderMarriageCreditSection,
   updateActionButtons,
-  showDiffTab
+  showDiffTab,
+  resetWorkflowContext
 } = require('../renderer.js');
 
 function resetAppState() {
   appState.selectedStateCode = null;
   appState.selectedStateConfig = null;
+  appState.selectedWorkflowKey = 'standard';
   appState.taxYear = 2024;
   appState.filePaths = {};
   appState.selectedPdfPath = null;
@@ -42,8 +46,10 @@ function resetAppState() {
   appState.homeownerRefundReview = null;
   appState.coFamilyAffordabilityReview = null;
   appState.constantsMaintenanceReview = null;
+  appState.unitTestDateRollerReview = null;
   appState.constantsShiftDeltaYears = 1;
   appState.constantsMaintenanceUi = { activeTab: 'auto' };
+  appState.unitTestDateRollerUi = { activeTab: 'ready' };
 }
 
 function pdfTextItem(str, x, y = 500) {
@@ -457,12 +463,61 @@ test('Constants maintenance: suggestion engine shifts MMYY values', () => {
   assert.equal(suggestion.confidence, 'high');
 });
 
+test('Constants maintenance: suggestion engine shifts date-like string values with two-digit years', () => {
+  const suggestion = suggestYearOverYearValue('04-15-26', 1);
+
+  assert.equal(suggestion.suggestedValue, '04-15-27');
+  assert.equal(suggestion.suggestionType, 'date-like-string');
+  assert.equal(suggestion.confidence, 'high');
+  assert.equal(suggestion.needsManualReview, false);
+});
+
+test('Constants maintenance: suggestion engine shifts compact YYYYMMDD date strings', () => {
+  const suggestion = suggestYearOverYearValue('20251231', 1);
+
+  assert.equal(suggestion.suggestedValue, '20261231');
+  assert.equal(suggestion.suggestionType, 'date-like-string');
+  assert.equal(suggestion.confidence, 'high');
+  assert.equal(suggestion.needsManualReview, false);
+});
+
+test('Constants maintenance: suggestion engine shifts compact MMDDYYYY date strings', () => {
+  const suggestion = suggestYearOverYearValue('01012025', 1);
+
+  assert.equal(suggestion.suggestedValue, '01012026');
+  assert.equal(suggestion.suggestionType, 'date-like-string');
+  assert.equal(suggestion.confidence, 'high');
+  assert.equal(suggestion.needsManualReview, false);
+});
+
+test('Constants maintenance: suggestion engine shifts contextual two-digit year strings', () => {
+  const suggestion = suggestYearOverYearValue('24', 1, {
+    name: 'TYBeginningYear',
+    description: 'Tax year Beginning year (YY)',
+    baseType: 'string'
+  });
+
+  assert.equal(suggestion.suggestedValue, '25');
+  assert.equal(suggestion.suggestionType, 'contextual-two-digit-year');
+  assert.equal(suggestion.confidence, 'medium');
+  assert.equal(suggestion.needsManualReview, false);
+});
+
 test('Constants maintenance: suggestion engine shifts embedded year text', () => {
   const suggestion = suggestYearOverYearValue('Tax Year 2025 Credit', 1);
 
   assert.equal(suggestion.suggestedValue, 'Tax Year 2026 Credit');
   assert.equal(suggestion.suggestionType, 'embedded-year');
   assert.equal(suggestion.confidence, 'medium');
+});
+
+test('Constants maintenance: suggestion engine shifts trailing year code values', () => {
+  const suggestion = suggestYearOverYearValue('SP2025', 1);
+
+  assert.equal(suggestion.suggestedValue, 'SP2026');
+  assert.equal(suggestion.suggestionType, 'trailing-year-code');
+  assert.equal(suggestion.confidence, 'medium');
+  assert.equal(suggestion.needsManualReview, false);
 });
 
 test('Constants maintenance: review splits automatic DateTime rows from manual year-over-year suggestions', () => {
@@ -495,15 +550,75 @@ test('Constants maintenance: review splits automatic DateTime rows from manual y
         description: 'Update yearly',
         baseType: 'string',
         value: '1225'
+      },
+      {
+        index: 4,
+        uid: 'date-like',
+        name: 'ESFirstQtrDueDate',
+        description: 'First quarter date',
+        baseType: 'string',
+        value: '04-15-26'
+      },
+      {
+        index: 5,
+        uid: 'suffix-year',
+        name: 'ORFormTypeSP',
+        description: 'Form SP type code for 2-D',
+        baseType: 'string',
+        value: 'SP2025'
+      },
+      {
+        index: 6,
+        uid: 'compact-date',
+        name: 'TaxYearEndOrgAndScanLine',
+        description: 'Tax year end for original or amended return voucher',
+        baseType: 'string',
+        value: '20251231'
+      },
+      {
+        index: 7,
+        uid: 'compact-us-date',
+        name: 'TaxBeginningDate',
+        description: 'Tax year beginning date',
+        baseType: 'string',
+        value: '01012025'
+      },
+      {
+        index: 8,
+        uid: 'contextual-yy-begin',
+        name: 'TYBeginningYear',
+        description: 'Tax year Beginning year (YY)',
+        baseType: 'string',
+        value: '24'
+      },
+      {
+        index: 9,
+        uid: 'contextual-yy-end',
+        name: 'TYEndingYear',
+        description: 'Tax year Ending year (YY)',
+        baseType: 'string',
+        value: '25'
       }
     ]
   }, 1);
 
   assert.equal(review.autoRows.length, 1);
-  assert.equal(review.manualRows.length, 2);
+  assert.equal(review.manualRows.length, 8);
   assert.equal(review.manualRows[0].suggestedValue, '2026');
   assert.equal(review.manualRows[0].description, 'Current tax year');
   assert.equal(review.manualRows[1].suggestedValue, '1226');
+  assert.equal(review.manualRows[2].suggestedValue, '04-15-27');
+  assert.equal(review.manualRows[2].needsManualReview, false);
+  assert.equal(review.manualRows[3].suggestedValue, 'SP2026');
+  assert.equal(review.manualRows[3].needsManualReview, false);
+  assert.equal(review.manualRows[4].suggestedValue, '20261231');
+  assert.equal(review.manualRows[4].needsManualReview, false);
+  assert.equal(review.manualRows[5].suggestedValue, '01012026');
+  assert.equal(review.manualRows[5].needsManualReview, false);
+  assert.equal(review.manualRows[6].suggestedValue, '25');
+  assert.equal(review.manualRows[6].needsManualReview, false);
+  assert.equal(review.manualRows[7].suggestedValue, '26');
+  assert.equal(review.manualRows[7].needsManualReview, false);
 });
 
 test('PDF page range scenario: manual range is required before extraction becomes available', () => {
@@ -633,6 +748,157 @@ test('Constants maintenance: non-Ohio states use the same no-PDF preview flow', 
   assert.equal(selectPdfBtn.style.display, 'none');
   assert.equal(pdfSection.style.display, 'none');
   assert.equal(extractBtn.disabled, false);
+});
+
+test('State switch reset: preserves a valid workflow and clears stale source state', () => {
+  resetAppState();
+  appState.selectedStateCode = 'OR';
+  appState.selectedStateConfig = OR_CONFIG;
+  appState.selectedWorkflowKey = 'constants-maintenance';
+  appState.filePaths = { CONSTS: 'C:\\TaxEngine\\OCE-Regulatory-2025\\Source\\OR\\Utils\\OR.consts.json' };
+  appState.selectedPdfPath = 'C:\\PDFs\\or-2025-booklet.pdf';
+  appState.pdfPageRangeOverride = { start: '30', end: '40' };
+  appState.constantsMaintenanceReview = { autoRows: [], manualRows: [{ index: 1 }] };
+
+  appState.selectedStateCode = 'FD';
+  appState.selectedStateConfig = getState('FD');
+  resetWorkflowContext('constants-maintenance');
+
+  assert.equal(appState.selectedWorkflowKey, 'constants-maintenance');
+  assert.deepEqual(appState.filePaths, {});
+  assert.equal(appState.selectedPdfPath, null);
+  assert.deepEqual(appState.pdfPageRangeOverride, { start: '', end: '' });
+  assert.equal(appState.constantsMaintenanceReview, null);
+});
+
+test('Unit test date roller: preview uses the test root path and does not require a PDF', () => {
+  resetAppState();
+  appState.selectedStateConfig = getState('OH');
+  appState.selectedStateCode = 'OH';
+  appState.selectedWorkflowKey = 'unit-test-date-roller';
+  appState.filePaths = {
+    TEST_ROOT: 'C:\\TaxEngine\\OCE-Regulatory-2025\\Source\\OH\\Tests\\Unit\\Calc',
+    CALC_ROOT: 'C:\\TaxEngine\\OCE-Regulatory-2025\\Source\\OH\\Calc',
+    CONSTS: 'C:\\TaxEngine\\OCE-Regulatory-2025\\Source\\OH\\Utils\\OH.consts.json'
+  };
+
+  const extractBtn = { disabled: true };
+  const updateJsonBtn = { disabled: true };
+  const uploadArea = { style: { display: '' } };
+  const selectPdfBtn = { style: { display: '' } };
+  const pdfSection = { style: { display: '' } };
+  const pdfSummary = { textContent: '' };
+  const pageStartInput = { value: '' };
+  const pageEndInput = { value: '' };
+
+  global.document = {
+    getElementById(id) {
+      return {
+        extractBtn,
+        updateJsonBtn,
+        uploadArea,
+        selectPdfBtn,
+        pdfSelectionSection: pdfSection,
+        pdfSelectionSummary: pdfSummary,
+        pdfPageStartInput: pageStartInput,
+        pdfPageEndInput: pageEndInput
+      }[id];
+    }
+  };
+
+  renderSelectedSource();
+  updateActionButtons();
+
+  assert.equal(selectPdfBtn.style.display, 'none');
+  assert.equal(pdfSection.style.display, 'none');
+  assert.equal(extractBtn.disabled, false);
+  assert.equal(updateJsonBtn.disabled, true);
+});
+
+test('Unit test date roller: review summary preserves calc, file, and ready-update counts', () => {
+  resetAppState();
+  appState.filePaths = {
+    TEST_ROOT: 'C:\\TaxEngine\\OCE-Regulatory-2025\\Source\\OH\\Tests\\Unit\\Calc',
+    CALC_ROOT: 'C:\\TaxEngine\\OCE-Regulatory-2025\\Source\\OH\\Calc',
+    CONSTS: 'C:\\TaxEngine\\OCE-Regulatory-2025\\Source\\OH\\Utils\\OH.consts.json'
+  };
+
+  const review = buildUnitTestDateRollerReview({
+    rootPath: appState.filePaths.TEST_ROOT,
+    calcRootPath: appState.filePaths.CALC_ROOT,
+    constantsPath: appState.filePaths.CONSTS,
+    calcFileCount: 4,
+    fileCount: 2,
+    updateCount: 2,
+    reviewCount: 1,
+    rows: [
+      { rowKind: 'input', filePath: 'a.test.json', calcFilePath: 'a.calc.json', calcFieldPath: 'OH/FormA/FieldA', caseName: 'case A', fieldPath: '0.inputs.0', valuePath: '0.inputs.0.value', type: 'DateTime', tomType: 'Date', constantName: 'SomeConstant', currentValue: '2025-04-15', proposedValue: '2026-04-15', canApply: true },
+      { rowKind: 'output', filePath: 'b.test.json', calcFilePath: 'b.calc.json', calcFieldPath: 'OH/FormB/FieldB', caseName: 'case B', fieldPath: '0.output', valuePath: '0.output.value.0', type: 'DateTime[]', tomType: 'Date', constantName: 'SomeConstant', currentValue: ['2025-06-15'], proposedValue: ['2026-06-15'], canApply: true },
+      { filePath: 'c.test.json', calcFilePath: 'c.calc.json', calcFieldPath: 'OH/FormC/FieldC', caseName: 'case C', fieldPath: '0.output', valuePath: '0.output.value', type: 'DateTime[]', tomType: 'Date', constantName: 'OtherConstant', currentValue: ['2025-09-15', '2025-12-15'], proposedValue: '', canApply: false, reason: 'Manual review' }
+    ]
+  });
+
+  assert.equal(review.fileCount, 2);
+  assert.equal(review.calcFileCount, 4);
+  assert.equal(review.rows.length, 3);
+  assert.equal(review.updateCount, 2);
+  assert.equal(review.reviewCount, 1);
+  assert.equal(review.readyRows.length, 2);
+  assert.equal(review.manualRows.length, 1);
+  assert.equal(review.caseCount, 3);
+  assert.equal(review.rows[0].calcFieldPath, 'OH/FormA/FieldA');
+  assert.equal(review.rows[1].caseName, 'case B');
+  assert.deepEqual(review.rows[1].proposedValue, ['2026-06-15']);
+});
+
+test('Unit test date roller: review UI separates ready and manual rows into tabs', () => {
+  resetAppState();
+  appState.selectedWorkflowKey = 'unit-test-date-roller';
+  appState.unitTestDateRollerReview = buildUnitTestDateRollerReview({
+    calcFileCount: 4,
+    fileCount: 2,
+    rows: [
+      { rowKind: 'input', filePath: 'a.test.json', calcFilePath: 'a.calc.json', calcFieldPath: 'OH/FormA/FieldA', caseName: 'case A', fieldPath: '0.inputs.0', valuePath: '0.inputs.0.value', type: 'DateTime', tomType: 'Date', constantName: 'SomeConstant', currentValue: '2025-04-15', proposedValue: '2026-04-15', canApply: true },
+      { filePath: 'c.test.json', calcFilePath: 'c.calc.json', calcFieldPath: 'OH/FormC/FieldC', caseName: 'case C', fieldPath: '0.output', valuePath: '0.output.value', type: 'DateTime[]', tomType: 'Date', constantName: 'OtherConstant', currentValue: ['2025-09-15', '2025-12-15'], proposedValue: '', canApply: false, reason: 'Manual review' }
+    ]
+  });
+
+  const container = {
+    style: {},
+    innerHTML: '',
+    querySelectorAll() {
+      return [];
+    }
+  };
+  global.document = {
+    getElementById(id) {
+      if (id === 'marriageCreditSection') return container;
+      return null;
+    }
+  };
+
+  renderMarriageCreditSection();
+  assert.match(container.innerHTML, /Ready for Update/);
+  assert.match(container.innerHTML, /Needs Manual Review/);
+  assert.match(container.innerHTML, /Impacted cases/);
+  assert.match(container.innerHTML, /Case 1: case A/);
+  assert.match(container.innerHTML, /Calc Field Path: OH\/FormA\/FieldA/);
+  assert.match(container.innerHTML, /Target/);
+  assert.match(container.innerHTML, />Input</);
+  assert.match(container.innerHTML, /Calc Field Path/);
+  assert.match(container.innerHTML, /OH\/FormA\/FieldA/);
+  assert.doesNotMatch(container.innerHTML, /Test File/);
+  assert.doesNotMatch(container.innerHTML, /Calc File/);
+  assert.match(container.innerHTML, /Ready Unit Test Updates/);
+  assert.match(container.innerHTML, /unit-test-panel-ready"><div class="content-section">/);
+  assert.match(container.innerHTML, /unit-test-review-panel active" id="unit-test-panel-ready"/);
+  assert.doesNotMatch(container.innerHTML, /unit-test-review-panel active" id="unit-test-panel-manual"/);
+
+  appState.unitTestDateRollerUi.activeTab = 'manual';
+  renderMarriageCreditSection();
+  assert.match(container.innerHTML, /Unit Tests Needing Manual Review/);
+  assert.match(container.innerHTML, /unit-test-review-panel active" id="unit-test-panel-manual"/);
+  assert.doesNotMatch(container.innerHTML, /unit-test-review-panel active" id="unit-test-panel-ready"/);
 });
 
 test('Review tab scenario: switching tabs keeps exactly one active tab and panel', () => {

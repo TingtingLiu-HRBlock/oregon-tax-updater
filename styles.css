@@ -600,13 +600,15 @@ label {
 
 .diff-table-wrapper {
   max-height: 400px;
-  overflow-y: auto;
+  overflow: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  scrollbar-gutter: stable both-edges;
 }
 
 .diff-table {
   width: 100%;
+  min-width: max-content;
   border-collapse: collapse;
   font-size: 12px;
 }
@@ -790,6 +792,24 @@ body:has(.settings-panel.open) .overlay {
 
 .marriage-credit-table-wrapper {
   max-height: 520px;
+}
+
+.table-scroll-sync {
+  display: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+  height: 14px;
+  margin-bottom: 8px;
+  border-radius: var(--radius-sm);
+  scrollbar-gutter: stable;
+}
+
+.table-scroll-sync.is-visible {
+  display: block;
+}
+
+.table-scroll-sync-inner {
+  height: 1px;
 }
 
 .marriage-credit-table tbody td:first-child {

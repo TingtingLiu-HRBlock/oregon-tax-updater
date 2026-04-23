@@ -11,6 +11,7 @@ Desktop Electron app for extracting state tax table values from official instruc
 - Shows a review screen before writing JSON updates.
 - Updates the selected JSON table files and the `Year` field.
 - Supports generic `Constants Maintenance` for all state and city codes that follow the shared TaxEngine constants-file pattern.
+- Supports generic `Unit Test Date Roller` for all state and city codes that follow the shared TaxEngine unit-test folder pattern.
 - Supports a dedicated Minnesota `M1MA Marriage Credit` workflow with full-table preview and single-file replace.
 - Supports a dedicated Colorado `Family Affordability Tax Credit` workflow with dual-table preview and two-file replace.
 
@@ -35,6 +36,32 @@ Desktop Electron app for extracting state tax table values from official instruc
   - Automatic date updates write both `Value` and `DataTimeValue`
   - Manual review rows show the constant description, suggested value, and editable final value
 
+### Generic Unit Test Date Roller
+- Availability:
+  - Any state or city code in the dropdown
+- Target paths:
+  - `C:\TaxEngine\OCE-Regulatory-{regulatoryYear}\Source\{STATE_CODE}\Tests\Unit\Calc`
+  - `C:\TaxEngine\OCE-Regulatory-{regulatoryYear}\Source\{STATE_CODE}\Calc`
+  - `C:\TaxEngine\OCE-Regulatory-{regulatoryYear}\Source\{STATE_CODE}\Utils\{STATE_CODE}.consts.json`
+- Match rule:
+  - Calc files under the selected calc root that use `Year Over Year` constants from the selected constants JSON
+  - Matching unit test files under the selected test root
+  - Output rows where the calc directly returns, branches to, or computes from a maintained constant
+  - Input rows where the calc compares date inputs against maintained date/year constants
+- Review mode:
+  - Two review tabs before write:
+    - `Ready for Update` for rows resolved safely from calc dependencies
+    - `Needs Manual Review` for rows that were detected but cannot be updated safely
+  - Shows calc field path, test case name, field path, constant name, current value, and proposed value
+- Special behavior:
+  - No PDF is required for this workflow
+  - Does not apply a blanket `+1/-1` year shift
+  - Only updates unit tests when the calc depends on maintained constants from the current constants file
+  - Supports scalar and array `DateTime`, string year values, selected matrix outputs, computed year expressions, and branch-return scenarios
+  - Can update related input dates when a test case needs to stay in the same relative tax-year position
+  - Preserves decimal precision when rewriting test JSON, including boundary values such as `0.01`
+  - Leaves unsupported calc shapes untouched instead of guessing
+
 ### Oregon
 - Filing statuses:
   - `S` = Single / Married Filing Separately
@@ -51,6 +78,7 @@ Desktop Electron app for extracting state tax table values from official instruc
   - `MOC` = Missouri City
   - `ORC` = Oregon City
 - These entries use the shared `Constants Maintenance` workflow and the same TaxEngine constants-file pattern.
+- These entries also use the shared `Unit Test Date Roller` workflow and the same TaxEngine unit-test folder pattern.
 
 ### Minnesota
 - Filing statuses:
@@ -191,6 +219,19 @@ This generates a Windows NSIS installer in `dist/` named like `State-Tax-Table-U
 9. Review the `Suggested Manual Updates` tab for other `Year Over Year` constants, using the description column to confirm or edit the proposed value.
 10. Click `Apply Year Shift` on the automatic tab or `Apply Manual Updates` on the manual tab.
 
+### Generic Unit Test Date Roller
+
+1. Start the app.
+2. Select the state or city code.
+3. Select the tax year.
+4. Choose workflow `Unit Test Date Roller`.
+5. Confirm the state unit-test root folder, calc root folder, and constants JSON path.
+6. Click `Preview Unit Test Updates`.
+7. Review the `Ready for Update` tab for calc-driven rows that can be written automatically.
+8. Review the `Needs Manual Review` tab for detected cases that require inspection.
+9. Confirm the calc field path and field path before applying broad updates.
+10. Click `Apply Unit Test Updates`.
+
 ## PDF Workflow Notes
 
 - Select only supported Oregon, Minnesota, or Colorado PDFs.
@@ -200,6 +241,7 @@ This generates a Windows NSIS installer in `dist/` named like `State-Tax-Table-U
 - For `M1MA Marriage Credit`, review the full extracted table before replacing the JSON file.
 - For Colorado `Family Affordability Tax Credit`, review both extracted tables before replacing the JSON files.
 - For `Constants Maintenance`, review both the automatic date shifts and the suggested manual values before applying the update.
+- For `Unit Test Date Roller`, review the ready/manual tabs and apply only rows resolved from maintained-constant dependencies.
 
 ## Project Structure
 
@@ -207,6 +249,7 @@ This generates a Windows NSIS installer in `dist/` named like `State-Tax-Table-U
 - [pathUtils.js](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/pathUtils.js): workflow-specific JSON path defaults and normalization helpers
 - [preload.js](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/preload.js): safe renderer bridge
 - [renderer.js](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/renderer.js): UI, extraction flow, deterministic parsers, diff review, and workflow-specific full-table previews
+- [unitTestDateRoller.js](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/unitTestDateRoller.js): calc-aware preview/apply helpers for constant-driven unit test JSON updates
 - [States/OR.js](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/States/OR.js): Oregon state config
 - [States/MN.js](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/States/MN.js): Minnesota state config
 - [States/CO.js](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/States/CO.js): Colorado state config
@@ -232,6 +275,7 @@ This generates a Windows NSIS installer in `dist/` named like `State-Tax-Table-U
 - For `M1MA Marriage Credit`, verify the target path resolves to `MNMarriageCredit.table.json` under `C:\TaxEngine\OCE-Regulatory-{regulatoryYear}\Source\MN\Utils\Tables\`.
 - For Colorado `Family Affordability Tax Credit`, verify both target paths resolve under `C:\TaxEngine\OCE-Regulatory-{regulatoryYear}\Source\CO\Utils\Tables\`.
 - For `Constants Maintenance`, verify the target path resolves under `C:\TaxEngine\OCE-Regulatory-{regulatoryYear}\Source\{STATE_CODE}\Utils\{STATE_CODE}.consts.json`.
+- For `Unit Test Date Roller`, verify the target path resolves under `C:\TaxEngine\OCE-Regulatory-{regulatoryYear}\Source\{STATE_CODE}\Tests\Unit\Calc`.
 
 ### App does not start
 - Run `npm install` again.

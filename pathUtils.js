@@ -32,6 +32,14 @@ function getConstsCanonicalPath(stateCode, regulatoryYear) {
   return `C:\\TaxEngine\\OCE-Regulatory-${regulatoryYear}\\Source\\${stateCode}\\Utils\\${stateCode}.consts.json`;
 }
 
+function getUnitTestCalcCanonicalPath(stateCode, regulatoryYear) {
+  return `C:\\TaxEngine\\OCE-Regulatory-${regulatoryYear}\\Source\\${stateCode}\\Tests\\Unit\\Calc`;
+}
+
+function getCalcCanonicalPath(stateCode, regulatoryYear) {
+  return `C:\\TaxEngine\\OCE-Regulatory-${regulatoryYear}\\Source\\${stateCode}\\Calc`;
+}
+
 function buildDefaultPaths(stateCode, regulatoryYear, workflowKey = 'standard') {
   if (stateCode === 'MN' && workflowKey === 'm1ma') {
     return {
@@ -62,6 +70,14 @@ function buildDefaultPaths(stateCode, regulatoryYear, workflowKey = 'standard') 
 
   if (workflowKey === 'constants-maintenance') {
     return {
+      CONSTS: getConstsCanonicalPath(stateCode, regulatoryYear)
+    };
+  }
+
+  if (workflowKey === 'unit-test-date-roller') {
+    return {
+      TEST_ROOT: getUnitTestCalcCanonicalPath(stateCode, regulatoryYear),
+      CALC_ROOT: getCalcCanonicalPath(stateCode, regulatoryYear),
       CONSTS: getConstsCanonicalPath(stateCode, regulatoryYear)
     };
   }
@@ -123,6 +139,8 @@ module.exports = {
   getCoFamilyAffordabilityUnder5CanonicalPath,
   getCoFamilyAffordabilityAge6To16CanonicalPath,
   getConstsCanonicalPath,
+  getCalcCanonicalPath,
+  getUnitTestCalcCanonicalPath,
   buildDefaultPaths,
   buildStorageKey,
   normalizeSavedPaths

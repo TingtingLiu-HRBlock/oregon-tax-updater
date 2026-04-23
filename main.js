@@ -3,6 +3,9 @@ const path = require('path');
 const fs = require('fs').promises;
 const { getAllStates, getState } = require('./States');
 const { buildDefaultPaths, buildStorageKey, normalizeSavedPaths } = require('./pathUtils');
+const { buildPreviewRows, applyPreviewRows, serializeTestJson } = require('./unitTestDateRoller');
+const { parseRelaxedJson } = require('./relaxedJson');
+const { buildConstantsByName } = require('./constantsByName');
 
 let mainWindow;
 
@@ -84,13 +87,16 @@ ipcMain.handle('select-pdf-file', async () => {
 });
 
 ipcMain.handle('select-json-file', async (event, type, currentPath) => {
+  const directoryTargets = new Set(['TEST_ROOT', 'CALC_ROOT']);
   const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openFile'],
+    properties: directoryTargets.has(type) ? ['openDirectory'] : ['openFile'],
     defaultPath: currentPath || '',
-    filters: [
-      { name: 'JSON Files', extensions: ['json'] },
-      { name: 'All Files', extensions: ['*'] }
-    ]
+    filters: directoryTargets.has(type)
+      ? undefined
+      : [
+          { name: 'JSON Files', extensions: ['json'] },
+          { name: 'All Files', extensions: ['*'] }
+        ]
   });
   return result.canceled ? null : result.filePaths[0];
 });
@@ -300,6 +306,159 @@ ipcMain.handle('apply-constants-manual-updates', async (event, payload) => {
     return {
       success: true,
       updatedCount
+    };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+});
+
+async function collectTestJsonFiles(rootPath) {
+  const found = [];
+
+  async function walk(currentPath) {
+    const entries = await fs.readdir(currentPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(currentPath, entry.name);
+      if (entry.isDirectory()) {
+        if (['bin', 'obj', 'node_modules', '.git'].includes(entry.name)) continue;
+        await walk(fullPath);
+        continue;
+      }
+      if (entry.isFile() && entry.name.endsWith('.test.json')) {
+        found.push(fullPath);
+      }
+    }
+  }
+
+  await walk(rootPath);
+  return found;
+}
+
+async function collectCalcJsonFiles(rootPath) {
+  const found = [];
+
+  async function walk(currentPath) {
+    const entries = await fs.readdir(currentPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(currentPath, entry.name);
+      if (entry.isDirectory()) {
+        if (['bin', 'obj', 'node_modules', '.git'].includes(entry.name)) continue;
+        await walk(fullPath);
+        continue;
+      }
+      if (entry.isFile() && entry.name.endsWith('.calc.json')) {
+        found.push(fullPath);
+      }
+    }
+  }
+
+  await walk(rootPath);
+  return found;
+}
+
+ipcMain.handle('preview-unit-test-date-roll', async (event, payload) => {
+  try {
+    const stat = await fs.stat(payload.rootPath);
+    if (!stat.isDirectory()) {
+      throw new Error('The test root path is not a directory.');
+    }
+
+    const calcStat = await fs.stat(payload.calcRootPath);
+    if (!calcStat.isDirectory()) {
+      throw new Error('The calc root path is not a directory.');
+    }
+
+    const constantsRaw = await fs.readFile(payload.constantsPath, 'utf-8');
+    const constantsData = parseRelaxedJson(constantsRaw);
+    const constantsByName = buildConstantsByName(constantsData, { yearOverYearOnly: true });
+    const allConstantsByName = buildConstantsByName(constantsData);
+
+    const files = await collectCalcJsonFiles(payload.calcRootPath);
+    const previewRows = [];
+    let matchedTestFileCount = 0;
+    for (const calcFilePath of files) {
+      try {
+        const relativePath = path.relative(payload.calcRootPath, calcFilePath);
+        const testFilePath = path.join(payload.rootPath, relativePath).replace(/\.calc\.json$/i, '.test.json');
+        let testStat;
+        try {
+          testStat = await fs.stat(testFilePath);
+        } catch {
+          continue;
+        }
+        if (!testStat.isFile()) {
+          continue;
+        }
+
+        matchedTestFileCount++;
+        const calcRaw = await fs.readFile(calcFilePath, 'utf-8');
+        const testRaw = await fs.readFile(testFilePath, 'utf-8');
+        const calcJson = parseRelaxedJson(calcRaw);
+        const testJson = parseRelaxedJson(testRaw);
+        const preview = buildPreviewRows({
+          calcJson,
+          testJson,
+          calcFilePath,
+          testFilePath,
+          constantsByName,
+          allConstantsByName
+        });
+        previewRows.push(...preview.rows);
+      } catch (error) {
+        throw new Error(`Failed to preview ${calcFilePath}: ${error.message}`);
+      }
+    }
+
+    return {
+      success: true,
+      rootPath: payload.rootPath,
+      calcRootPath: payload.calcRootPath,
+      constantsPath: payload.constantsPath,
+      calcFileCount: files.length,
+      fileCount: matchedTestFileCount,
+      updateCount: previewRows.filter(row => row.canApply !== false).length,
+      reviewCount: previewRows.filter(row => row.canApply === false).length,
+      rows: previewRows
+    };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+});
+
+ipcMain.handle('apply-unit-test-date-roll', async (event, payload) => {
+  try {
+    if (!Array.isArray(payload?.rows) || payload.rows.length === 0) {
+      throw new Error('rows must contain at least one unit test date update.');
+    }
+
+    const rowsByFile = new Map();
+    for (const row of payload.rows.filter(candidate => candidate?.canApply !== false)) {
+      if (!rowsByFile.has(row.filePath)) rowsByFile.set(row.filePath, []);
+      rowsByFile.get(row.filePath).push(row);
+    }
+    if (rowsByFile.size === 0) {
+      throw new Error('No unit test rows were eligible for automatic update.');
+    }
+
+    let updatedFileCount = 0;
+    let updatedValueCount = 0;
+    for (const [filePath, rows] of rowsByFile.entries()) {
+      try {
+        const raw = await fs.readFile(filePath, 'utf-8');
+        const parsed = parseRelaxedJson(raw);
+        applyPreviewRows(parsed, rows);
+        await fs.writeFile(filePath, serializeTestJson(parsed), 'utf-8');
+        updatedFileCount++;
+        updatedValueCount += rows.length;
+      } catch (error) {
+        throw new Error(`Failed to update ${filePath}: ${error.message}`);
+      }
+    }
+
+    return {
+      success: true,
+      updatedFileCount,
+      updatedValueCount
     };
   } catch (error) {
     return { success: false, message: error.message };
