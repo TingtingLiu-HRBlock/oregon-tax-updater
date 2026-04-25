@@ -59,6 +59,10 @@ Desktop Electron app for extracting state tax table values from official instruc
   - Only updates unit tests when the calc depends on maintained constants from the current constants file
   - Supports scalar and array `DateTime`, string year values, selected matrix outputs, computed year expressions, and branch-return scenarios
   - Can update related input dates when a test case needs to stay in the same relative tax-year position
+  - Preserves input date offsets from maintained date constants instead of applying a blanket calendar-year check
+  - Skips inputs that already appear close to the current maintained boundary, which helps avoid shifting already-updated tests a second time
+  - Supports computed decimal and decimal-array outputs for maintained-constant `Calc.DaysBetween(...)`, `Calc.Max(...)`, and simple date `AddDays`/`SubtractDays` expressions
+  - Handles next-year spillover cases such as `LastDayOfTheYear + N days` while preserving the same relative position after rollover
   - Preserves decimal precision when rewriting test JSON, including boundary values such as `0.01`
   - Leaves unsupported calc shapes untouched instead of guessing
 

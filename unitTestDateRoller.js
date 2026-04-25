@@ -260,6 +260,34 @@ function flattenValues(value) {
 }
 
 function deriveProposedValue(node, constantValue) {
+  if (node.type === 'decimal') {
+    const parsed = Number(constantValue);
+    if (!Number.isFinite(parsed)) {
+      return { supported: false, reason: 'Constant value is not a supported decimal.' };
+    }
+    return { supported: true, proposedValue: parsed };
+  }
+
+  if (node.type === 'decimal[]') {
+    if (!Array.isArray(node.value) || node.value.length === 0) {
+      return { supported: false, skip: true, reason: 'Current test value is null or an empty decimal array.' };
+    }
+    if (Array.isArray(constantValue)) {
+      if (constantValue.length !== node.value.length || !constantValue.every(value => Number.isFinite(Number(value)))) {
+        return { supported: false, reason: 'Constant array does not match the current decimal array shape.' };
+      }
+      return { supported: true, proposedValue: constantValue.map(value => Number(value)) };
+    }
+    if (node.value.length !== 1) {
+      return { supported: false, reason: 'Scalar constant cannot safely replace a multi-value decimal[] test output.' };
+    }
+    const parsed = Number(constantValue);
+    if (!Number.isFinite(parsed)) {
+      return { supported: false, reason: 'Constant value is not a supported decimal.' };
+    }
+    return { supported: true, proposedValue: [parsed] };
+  }
+
   if (node.type === 'int' || node.type === 'integer') {
     const parsed = Number.parseInt(constantValue, 10);
     if (!Number.isFinite(parsed)) {
@@ -463,8 +491,19 @@ function deriveInputBoundaryProposedValue(inputNode, constantValue, options = {}
       return { supported: false, skip: true, reason: 'Current input value is not a supported YYYY-MM-DD date.' };
     }
     const currentDate = parseIsoDate(currentValue);
-    const priorYearDate = parseIsoDate(priorYearValue);
-    if (currentDate.getUTCFullYear() > priorYearDate.getUTCFullYear()) {
+    const constantDate = parseIsoDate(constantValue);
+    const currentOffsetDays = daysBetween(constantValue, currentValue);
+    const alreadyNearCurrentBoundary = currentOffsetDays !== null
+      && Math.abs(currentOffsetDays) <= 31
+      && (
+        currentDate.getUTCFullYear() === constantDate.getUTCFullYear()
+        || (
+          constantDate.getUTCMonth() === 11
+          && currentDate.getUTCFullYear() === constantDate.getUTCFullYear() + 1
+          && currentDate.getUTCMonth() === 0
+        )
+      );
+    if (alreadyNearCurrentBoundary) {
       return { supported: false, skip: true, reason: 'Input already appears to be in the maintained tax-year cycle.' };
     }
     if (Math.abs(offsetDays) > 370) {
@@ -677,6 +716,26 @@ function evaluateExpression(expression, context) {
       maintainedNames: entry.constantValue === undefined ? [] : [entry.constantName]
     };
   }
+
+  let match = expr.match(/^(\{\d+\})\.(SubtractDays|AddDays)\((\d+)\)$/);
+  if (match) {
+    const base = evaluateExpression(match[1], context);
+    if (!base.ok) return base;
+    const days = Number(match[3]) * (match[2] === 'SubtractDays' ? -1 : 1);
+    const shiftDate = value => {
+      const shifted = addDays(value, days);
+      return shifted || null;
+    };
+    if (Array.isArray(base.value)) {
+      const shiftedValues = base.value.map(shiftDate);
+      if (shiftedValues.some(value => value === null)) return { ok: false };
+      return { ok: true, value: shiftedValues, maintainedNames: base.maintainedNames || [] };
+    }
+    const shiftedValue = shiftDate(base.value);
+    if (!shiftedValue) return { ok: false };
+    return { ok: true, value: shiftedValue, maintainedNames: base.maintainedNames || [] };
+  }
+
   if (Object.prototype.hasOwnProperty.call(context.variables, expr)) {
     return context.variables[expr];
   }
@@ -687,7 +746,7 @@ function evaluateExpression(expression, context) {
     return { ok: true, value: /^true$/i.test(expr), maintainedNames: [] };
   }
 
-  let match = expr.match(/^Convert\.ToInt32\((.+)\)$/);
+  match = expr.match(/^Convert\.ToInt32\((.+)\)$/);
   if (match) {
     const arg = evaluateExpression(match[1], context);
     if (!arg.ok) return arg;
@@ -726,6 +785,41 @@ function evaluateExpression(expression, context) {
     return {
       ok: true,
       value: Number(args[0].value) - Number(args[1].value),
+      maintainedNames: args.flatMap(arg => arg.maintainedNames || [])
+    };
+  }
+
+  match = expr.match(/^Calc\.Max\((.+)\)$/);
+  if (match) {
+    const args = splitArguments(match[1]).map(arg => evaluateExpression(arg, context));
+    if (args.some(arg => !arg.ok)) return { ok: false };
+    if (args.some(arg => Array.isArray(arg.value))) {
+      return { ok: false };
+    }
+    return {
+      ok: true,
+      value: Math.max(...args.map(arg => Number(arg.value))),
+      maintainedNames: args.flatMap(arg => arg.maintainedNames || [])
+    };
+  }
+
+  match = expr.match(/^Calc\.DaysBetween\((.+)\)$/);
+  if (match) {
+    const args = splitArguments(match[1]).map(arg => evaluateExpression(arg, context));
+    if (args.length !== 2 || args.some(arg => !arg.ok)) return { ok: false };
+    const starts = Array.isArray(args[0].value) ? args[0].value : [args[0].value];
+    const ends = Array.isArray(args[1].value) ? args[1].value : [args[1].value];
+    const length = Math.max(starts.length, ends.length);
+    if (![1, length].includes(starts.length) || ![1, length].includes(ends.length)) return { ok: false };
+    const values = [];
+    for (let index = 0; index < length; index++) {
+      const diff = daysBetween(starts[starts.length === 1 ? 0 : index], ends[ends.length === 1 ? 0 : index]);
+      if (diff === null) return { ok: false };
+      values.push(diff);
+    }
+    return {
+      ok: true,
+      value: values.length === 1 ? values[0] : values,
       maintainedNames: args.flatMap(arg => arg.maintainedNames || [])
     };
   }
@@ -817,6 +911,18 @@ function conditionMatchesTestCase(condition, context, testCase) {
   return false;
 }
 
+function conditionUsesMaintainedConstant(condition, context) {
+  return getConditionMaintainedNames(condition, context).length > 0;
+}
+
+function getConditionMaintainedNames(condition, context) {
+  const placeholders = String(condition || '').match(/\{\d+\}/g) || [];
+  return Array.from(new Set(placeholders
+    .map(placeholder => context.entriesByPlaceholder.get(placeholder))
+    .filter(entry => entry?.dependency?.FieldType === 'Constant' && entry.constantValue !== undefined)
+    .map(entry => entry.constantName)));
+}
+
 function getComputedReturnConstant(calcJson, constantsByName, allConstantsByName, testCase) {
   const entriesByPlaceholder = new Map(getDependencyEntries(calcJson, constantsByName, allConstantsByName).map(entry => [entry.placeholder, entry]));
   const lines = Array.isArray(calcJson?.Custom)
@@ -826,6 +932,25 @@ function getComputedReturnConstant(calcJson, constantsByName, allConstantsByName
   const context = { entriesByPlaceholder, variables, testCase };
 
   for (let index = 0; index < lines.length; index++) {
+    const inlineIfMatch = lines[index].match(/^if\s*\((.+)\)\s*return\s+(.+);$/);
+    if (inlineIfMatch) {
+      const conditionMaintainedNames = getConditionMaintainedNames(inlineIfMatch[1], context);
+      if (conditionMatchesTestCase(inlineIfMatch[1], context, testCase)) {
+        const evaluated = evaluateExpression(inlineIfMatch[2], context);
+        const maintainedNames = Array.from(new Set([
+          ...conditionMaintainedNames,
+          ...(evaluated.maintainedNames || [])
+        ]));
+        if (evaluated.ok && maintainedNames.length) {
+          return {
+            constantName: maintainedNames.join(', '),
+            constantValue: evaluated.value
+          };
+        }
+      }
+      continue;
+    }
+
     const ifMatch = lines[index].match(/^if\s*\((.+)\)$/);
     if (ifMatch && lines[index + 1] === '{') {
       let closeIndex = index + 2;
@@ -836,9 +961,13 @@ function getComputedReturnConstant(calcJson, constantsByName, allConstantsByName
       const returnLine = blockLines.find(line => /^return\s+.+;$/.test(line));
       if (returnLine && conditionMatchesTestCase(ifMatch[1], context, testCase)) {
         const evaluated = evaluateExpression(returnLine.replace(/^return\s+/, '').replace(/;$/, ''), context);
-        if (evaluated.ok && evaluated.maintainedNames?.length) {
+        const maintainedNames = Array.from(new Set([
+          ...getConditionMaintainedNames(ifMatch[1], context),
+          ...(evaluated.maintainedNames || [])
+        ]));
+        if (evaluated.ok && maintainedNames.length) {
           return {
-            constantName: Array.from(new Set(evaluated.maintainedNames)).join(', '),
+            constantName: maintainedNames.join(', '),
             constantValue: evaluated.value
           };
         }
@@ -904,7 +1033,7 @@ function getConditionalReturnValue(calcJson, constantsByName, allConstantsByName
           constantValue: returnedEntry.constantValue
         };
       }
-      if (isInputLikeDependency(returnedEntry.dependency)) {
+      if (isInputLikeDependency(returnedEntry.dependency) && conditionUsesMaintainedConstant(ifMatch[2], context)) {
         const returnedValue = getCaseInputValue(testCase, returnedEntry.dependency);
         if (returnedValue === undefined || returnedValue === null) {
           return null;

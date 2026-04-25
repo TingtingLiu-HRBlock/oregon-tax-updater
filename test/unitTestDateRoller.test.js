@@ -386,6 +386,56 @@ test('Unit test date roller: branch return uses proposed input values in the sam
   assert.equal(testJson[0].output.value, '2026-02-01');
 });
 
+test('Unit test date roller: ignores returned input outputs when the branch has no maintained constant', () => {
+  const preview = buildPreviewRows({
+    calcJson: {
+      Entity: 'OH',
+      Form: 'FormIT1040.FormDetail.FormITNRC.NonResCrtCalculation',
+      Field: 'FDDedFromFDAGI',
+      Type: 'int',
+      TomType: 'Integer',
+      Dependencies: [
+        { Entity: 'OH', Form: 'FormIT1040.FormDetail.FormITNRC.NonResCrtCalculation', Field: 'FDDedFromFDAGIInput', Type: 'int', TomType: 'Integer', FieldType: 'Input', FieldRef: 'OH/FormIT1040.FormDetail.FormITNRC.NonResCrtCalculation/FDDedFromFDAGIInput' }
+      ],
+      Custom: [
+        'if ({0} > 0)',
+        '{',
+        '    return {0};',
+        '}',
+        'return 0;'
+      ]
+    },
+    testJson: [
+      {
+        name: 2,
+        inputs: [
+          {
+            entity: 'OH',
+            form: 'FormIT1040.FormDetail.FormITNRC.NonResCrtCalculation',
+            field: 'FDDedFromFDAGIInput',
+            type: 'int',
+            tomType: 'Integer',
+            value: 1000
+          }
+        ],
+        output: {
+          entity: 'OH',
+          form: 'FormIT1040.FormDetail.FormITNRC.NonResCrtCalculation',
+          field: 'FDDedFromFDAGI',
+          type: 'int',
+          tomType: 'Integer',
+          value: 1000
+        }
+      }
+    ],
+    calcFilePath: 'FDDedFromFDAGI.calc.json',
+    testFilePath: 'FDDedFromFDAGI.test.json',
+    constantsByName: {}
+  });
+
+  assert.equal(preview.rows.length, 0);
+});
+
 test('Unit test date roller: previews computed integer outputs from maintained CurrentTaxYear', () => {
   const preview = buildPreviewRows({
     calcJson: {
@@ -899,6 +949,206 @@ test('Unit test date roller: does not shift already-updated date helper inputs a
   });
 
   assert.equal(preview.rows.length, 0);
+});
+
+test('Unit test date roller: updates computed decimal outputs from maintained date branch literals', () => {
+  const preview = buildPreviewRows({
+    calcJson: {
+      Entity: 'OH',
+      Form: 'FormSD100Single.Form2210.ThirdQuarterLatePayments',
+      Field: 'CYDaysLate',
+      Type: 'decimal',
+      TomType: 'USAmount',
+      Dependencies: [
+        { FieldType: 'Constant', FieldRef: 'OH/Constant/Form2210ThirdQuarterDate', Constant: 'Form2210ThirdQuarterDate' },
+        { FieldType: 'Constant', FieldRef: 'OH/Constant/Form2210FourthQuarterDate', Constant: 'Form2210FourthQuarterDate' },
+        { Entity: 'OH', Form: 'FormSD100Single.Form2210.Part1', Field: 'Q3PaymentDate', Type: 'DateTime', TomType: 'Date', FieldType: 'Calculated', FieldRef: 'OH/FormSD100Single.Form2210.Part1/Q3PaymentDate' }
+      ],
+      Custom: [
+        'if({2}.IsOnOrAfter({1})) return 0;',
+        'return Calc.Max(0, Calc.DaysBetween({0}, {2}));'
+      ]
+    },
+    testJson: [
+      {
+        name: 'Q3PaymentDateOnQ4Date',
+        inputs: [
+          {
+            entity: 'OH',
+            form: 'FormSD100Single.Form2210.Part1',
+            field: 'Q3PaymentDate',
+            type: 'DateTime',
+            tomType: 'Date',
+            value: '2026-01-15'
+          }
+        ],
+        output: {
+          entity: 'OH',
+          form: 'FormSD100Single.Form2210.ThirdQuarterLatePayments',
+          field: 'CYDaysLate',
+          type: 'decimal',
+          tomType: 'USAmount',
+          value: 107
+        }
+      }
+    ],
+    calcFilePath: 'CYDaysLate.calc.json',
+    testFilePath: 'CYDaysLate.test.json',
+    constantsByName: {
+      Form2210ThirdQuarterDate: '2026-09-15',
+      Form2210FourthQuarterDate: '2026-01-15'
+    }
+  });
+
+  assert.equal(preview.rows.length, 2);
+  assert.equal(preview.rows[0].rowKind, 'input');
+  assert.equal(preview.rows[0].constantName, 'Form2210ThirdQuarterDate');
+  assert.equal(preview.rows[0].currentValue, '2026-01-15');
+  assert.equal(preview.rows[0].proposedValue, '2027-01-15');
+  assert.equal(preview.rows[1].rowKind, 'output');
+  assert.equal(preview.rows[1].constantName, 'Form2210FourthQuarterDate');
+  assert.equal(preview.rows[1].currentValue, 107);
+  assert.equal(preview.rows[1].proposedValue, 0);
+});
+
+test('Unit test date roller: shifts next-year spillover inputs for DaysBetween from year-end constants', () => {
+  const preview = buildPreviewRows({
+    calcJson: {
+      Entity: 'OH',
+      Form: 'FormSD100Single.Form2210.ThirdQuarterLatePayments',
+      Field: 'NYDaysLate',
+      Type: 'decimal',
+      TomType: 'USAmount',
+      Dependencies: [
+        { FieldType: 'Constant', FieldRef: 'OH/Constant/Form2210FourthQuarterDate', Constant: 'Form2210FourthQuarterDate' },
+        { Entity: 'OH', Form: 'FormSD100Single.Form2210.Part1', Field: 'Q3PaymentDate', Type: 'DateTime', TomType: 'Date', FieldType: 'Calculated', FieldRef: 'OH/FormSD100Single.Form2210.Part1/Q3PaymentDate' },
+        { FieldType: 'Constant', FieldRef: 'OH/Constant/LastDayOfTheYear', Constant: 'LastDayOfTheYear' }
+      ],
+      Custom: [
+        'if({1}.IsOnOrAfter({0})) return 0;',
+        'if({1}.IsAfter({2}))',
+        '{',
+        '    return Calc.Max(0, Calc.DaysBetween({2}, {1}));',
+        '}',
+        'return 0;'
+      ]
+    },
+    testJson: [
+      {
+        name: 'Q3PaymentDateExactlyOneDayLate',
+        inputs: [
+          {
+            entity: 'OH',
+            form: 'FormSD100Single.Form2210.Part1',
+            field: 'Q3PaymentDate',
+            type: 'DateTime',
+            tomType: 'Date',
+            value: '2026-01-01'
+          }
+        ],
+        output: {
+          entity: 'OH',
+          form: 'FormSD100Single.Form2210.ThirdQuarterLatePayments',
+          field: 'NYDaysLate',
+          type: 'decimal',
+          tomType: 'USAmount',
+          value: 1
+        }
+      },
+      {
+        name: 'Q3PaymentDateExactlyTenDaysLate',
+        inputs: [
+          {
+            entity: 'OH',
+            form: 'FormSD100Single.Form2210.Part1',
+            field: 'Q3PaymentDate',
+            type: 'DateTime',
+            tomType: 'Date',
+            value: '2026-01-10'
+          }
+        ],
+        output: {
+          entity: 'OH',
+          form: 'FormSD100Single.Form2210.ThirdQuarterLatePayments',
+          field: 'NYDaysLate',
+          type: 'decimal',
+          tomType: 'USAmount',
+          value: 10
+        }
+      }
+    ],
+    calcFilePath: 'NYDaysLate.calc.json',
+    testFilePath: 'NYDaysLate.test.json',
+    constantsByName: {
+      Form2210FourthQuarterDate: '2027-01-15',
+      LastDayOfTheYear: '2026-12-31'
+    }
+  });
+
+  assert.equal(preview.rows.length, 2);
+  assert.equal(preview.rows[0].rowKind, 'input');
+  assert.equal(preview.rows[0].caseName, 'Q3PaymentDateExactlyOneDayLate');
+  assert.equal(preview.rows[0].constantName, 'LastDayOfTheYear');
+  assert.equal(preview.rows[0].currentValue, '2026-01-01');
+  assert.equal(preview.rows[0].proposedValue, '2027-01-01');
+  assert.equal(preview.rows[1].caseName, 'Q3PaymentDateExactlyTenDaysLate');
+  assert.equal(preview.rows[1].currentValue, '2026-01-10');
+  assert.equal(preview.rows[1].proposedValue, '2027-01-10');
+});
+
+test('Unit test date roller: updates computed decimal array outputs from DaysBetween expressions', () => {
+  const preview = buildPreviewRows({
+    calcJson: {
+      Entity: 'OH',
+      Form: 'FormSD100Single.Header.SDResidencySchedule.ResidencyPeriodsSpouse',
+      Field: 'DaysFromStart',
+      Type: 'decimal[]',
+      TomType: 'USAmount',
+      Dependencies: [
+        { Entity: 'OH', Form: 'FormSD100Single.Header.SDResidencySchedule.ResidencyPeriodsSpouse', Field: 'BeginDate', Type: 'DateTime[]', TomType: 'Date', FieldType: 'Calculated', FieldRef: 'OH/FormSD100Single.Header.SDResidencySchedule.ResidencyPeriodsSpouse/BeginDate' },
+        { FieldType: 'Constant', FieldRef: 'OH/Constant/FirstDayOfTheYear', Constant: 'FirstDayOfTheYear' }
+      ],
+      Custom: [
+        'return Calc.DaysBetween({1}.SubtractDays(1), {0});'
+      ]
+    },
+    testJson: [
+      {
+        name: 'DaysFromStartWithBeginDateBeforeYearStart',
+        inputs: [
+          {
+            entity: 'OH',
+            form: 'FormSD100Single.Header.SDResidencySchedule.ResidencyPeriodsSpouse',
+            field: 'BeginDate',
+            type: 'DateTime[]',
+            tomType: 'Date',
+            value: ['2025-12-31']
+          }
+        ],
+        output: {
+          entity: 'OH',
+          form: 'FormSD100Single.Header.SDResidencySchedule.ResidencyPeriodsSpouse',
+          field: 'DaysFromStart',
+          type: 'decimal[]',
+          tomType: 'USAmount',
+          value: [0]
+        }
+      }
+    ],
+    calcFilePath: 'DaysFromStart.calc.json',
+    testFilePath: 'DaysFromStart.test.json',
+    constantsByName: {
+      FirstDayOfTheYear: '2026-01-01'
+    }
+  });
+
+  assert.equal(preview.rows.length, 2);
+  assert.equal(preview.rows[0].rowKind, 'input');
+  assert.deepEqual(preview.rows[0].proposedValue, ['2026-12-31']);
+  assert.equal(preview.rows[1].rowKind, 'output');
+  assert.equal(preview.rows[1].constantName, 'FirstDayOfTheYear');
+  assert.deepEqual(preview.rows[1].currentValue, [0]);
+  assert.deepEqual(preview.rows[1].proposedValue, [365]);
 });
 
 test('Unit test date roller: preserves offsets when DaysBetween starts from a shifted constant method call', () => {
