@@ -41,6 +41,10 @@
             <select id="workflowSelect" class="select-input"></select>
             <div class="form-hint" id="workflowHint"></div>
           </div>
+
+          <button id="clearDataBtn" class="btn btn-outline sidebar-action" type="button">
+            Clear Data
+          </button>
         </div>
 
         <div class="nav-section">
@@ -95,6 +99,24 @@
         <button id="extractBtn" class="btn btn-primary" disabled>
           Extract Data
         </button>
+
+        <div id="unitTestLogControls" class="api-key-row" style="display:none; margin-top:12px; gap:12px; align-items:center; flex-wrap:wrap;">
+          <button id="previewUnitTestLogBtn" class="btn btn-secondary" disabled>
+            Preview Failed Output Updates
+          </button>
+          <button id="applyUnitTestLogBtn" class="btn btn-success" disabled>
+            Apply Failed Output Updates
+          </button>
+          <p class="upload-hint" id="unitTestLogHint" style="margin:0; max-width:620px;">Reads the latest Omnistudio unit-test log and proposes output-only updates from failed expected/actual assertions.</p>
+        </div>
+
+        <div id="unitTestAggressiveControls" class="api-key-row" style="display:none; margin-top:12px; gap:12px; align-items:center; flex-wrap:wrap;">
+          <label class="checkbox-option" for="aggressiveDateTimeInputsToggle">
+            <input type="checkbox" id="aggressiveDateTimeInputsToggle" />
+            <span>Aggressive DateTime inputs</span>
+          </label>
+          <p class="upload-hint" style="margin:0; max-width:720px;">Adds an experimental preview tab that shifts every DateTime input by +1 year when the calc file references a year-over-year constant.</p>
+        </div>
 
         <div id="constantsShiftControls" class="api-key-row" style="display:none; margin-top:12px; gap:12px; align-items:end; flex-wrap:wrap;">
           <div class="form-group" style="margin:0; min-width:220px;">

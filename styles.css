@@ -209,6 +209,27 @@ label {
   margin-top: -2px;
 }
 
+.checkbox-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 7px 10px;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 12px;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
+.checkbox-option input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+}
+
 .select-input, .text-input {
   width: 100%;
   background: var(--bg-3);
@@ -339,6 +360,10 @@ label {
 .btn-outline:not(:disabled):hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.sidebar-action {
+  width: 100%;
 }
 
 .btn-sm {

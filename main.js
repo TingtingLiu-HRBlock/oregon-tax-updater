@@ -4,6 +4,7 @@ const fs = require('fs').promises;
 const { getAllStates, getState } = require('./States');
 const { buildDefaultPaths, buildStorageKey, normalizeSavedPaths } = require('./pathUtils');
 const { buildPreviewRows, applyPreviewRows, serializeTestJson } = require('./unitTestDateRoller');
+const { buildLogUpdatePreview, applyLogUpdateRows } = require('./unitTestLogUpdater');
 const { parseRelaxedJson } = require('./relaxedJson');
 const { buildConstantsByName } = require('./constantsByName');
 
@@ -401,7 +402,8 @@ ipcMain.handle('preview-unit-test-date-roll', async (event, payload) => {
           calcFilePath,
           testFilePath,
           constantsByName,
-          allConstantsByName
+          allConstantsByName,
+          includeAggressiveDateTimeInputs: payload.includeAggressiveDateTimeInputs === true
         });
         previewRows.push(...preview.rows);
       } catch (error) {
@@ -460,6 +462,34 @@ ipcMain.handle('apply-unit-test-date-roll', async (event, payload) => {
       updatedFileCount,
       updatedValueCount
     };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+});
+
+ipcMain.handle('preview-unit-test-log-updates', async (event, payload) => {
+  try {
+    const stat = await fs.stat(payload.rootPath);
+    if (!stat.isDirectory()) {
+      throw new Error('The test root path is not a directory.');
+    }
+    return await buildLogUpdatePreview({
+      rootPath: payload.rootPath,
+      stateCode: payload.stateCode,
+      logPath: payload.logPath,
+      regulatoryYear: payload.regulatoryYear
+    });
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+});
+
+ipcMain.handle('apply-unit-test-log-updates', async (event, payload) => {
+  try {
+    if (!Array.isArray(payload?.rows) || payload.rows.length === 0) {
+      throw new Error('rows must contain at least one log-derived output update.');
+    }
+    return await applyLogUpdateRows(payload.rows);
   } catch (error) {
     return { success: false, message: error.message };
   }

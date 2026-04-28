@@ -25,11 +25,13 @@ const {
   buildUnitTestDateRollerReview,
   normalizeDeterministicRowsToData,
   getEffectivePdfPageRange,
+  renderWorkflowText,
   renderSelectedSource,
   renderMarriageCreditSection,
   updateActionButtons,
   showDiffTab,
-  resetWorkflowContext
+  resetWorkflowContext,
+  clearTransientData
 } = require('../renderer.js');
 
 function resetAppState() {
@@ -47,9 +49,11 @@ function resetAppState() {
   appState.coFamilyAffordabilityReview = null;
   appState.constantsMaintenanceReview = null;
   appState.unitTestDateRollerReview = null;
+  appState.unitTestLogReview = null;
   appState.constantsShiftDeltaYears = 1;
   appState.constantsMaintenanceUi = { activeTab: 'auto' };
   appState.unitTestDateRollerUi = { activeTab: 'ready' };
+  appState.unitTestDateRollerOptions = { includeAggressiveDateTimeInputs: false };
 }
 
 function pdfTextItem(str, x, y = 500) {
@@ -72,6 +76,31 @@ function createClassList(initial = []) {
       return classes.has(name);
     }
   };
+}
+
+function createWorkflowTextDom(extra = {}) {
+  const elements = {
+    constantsShiftDirectionSelect: { value: '' },
+    sourceSubtitle: { textContent: '' },
+    uploadHint: { textContent: '' },
+    pageRangeHint: { textContent: '' },
+    extractSectionTitle: { textContent: '' },
+    extractSectionSubtitle: { textContent: '' },
+    extractBtn: { textContent: '', disabled: false },
+    updateSectionTitle: { textContent: '' },
+    updateSectionSubtitle: { textContent: '' },
+    updateJsonBtn: { textContent: '', disabled: false },
+    constantsShiftControls: { style: { display: '' } },
+    unitTestLogControls: { style: { display: '' } },
+    constantsShiftHint: { textContent: '' },
+    ...extra
+  };
+  global.document = {
+    getElementById(id) {
+      return elements[id];
+    }
+  };
+  return elements;
 }
 
 test.afterEach(() => {
@@ -750,6 +779,26 @@ test('Constants maintenance: non-Ohio states use the same no-PDF preview flow', 
   assert.equal(extractBtn.disabled, false);
 });
 
+test('Workflow text reset: switching from unit tests to constants updates the preview button label', () => {
+  resetAppState();
+  appState.selectedStateConfig = CO_CONFIG;
+  appState.selectedStateCode = 'CO';
+  const elements = createWorkflowTextDom();
+
+  appState.selectedWorkflowKey = 'unit-test-date-roller';
+  renderWorkflowText();
+  assert.equal(elements.extractBtn.textContent, 'Preview Unit Test Updates');
+  assert.equal(elements.unitTestLogControls.style.display, 'flex');
+
+  appState.selectedWorkflowKey = 'constants-maintenance';
+  renderWorkflowText();
+
+  assert.equal(elements.extractBtn.textContent, 'Preview Year Shift');
+  assert.equal(elements.updateJsonBtn.textContent, 'Apply Year Shift');
+  assert.equal(elements.unitTestLogControls.style.display, 'none');
+  assert.equal(elements.constantsShiftControls.style.display, 'flex');
+});
+
 test('State switch reset: preserves a valid workflow and clears stale source state', () => {
   resetAppState();
   appState.selectedStateCode = 'OR';
@@ -844,11 +893,26 @@ test('Unit test date roller: review summary preserves calc, file, and ready-upda
   assert.equal(review.updateCount, 2);
   assert.equal(review.reviewCount, 1);
   assert.equal(review.readyRows.length, 2);
+  assert.equal(review.aggressiveRows.length, 0);
   assert.equal(review.manualRows.length, 1);
   assert.equal(review.caseCount, 3);
   assert.equal(review.rows[0].calcFieldPath, 'OH/FormA/FieldA');
   assert.equal(review.rows[1].caseName, 'case B');
   assert.deepEqual(review.rows[1].proposedValue, ['2026-06-15']);
+});
+
+test('Unit test date roller: review separates experimental DateTime input rows', () => {
+  resetAppState();
+  const review = buildUnitTestDateRollerReview({
+    rows: [
+      { rowKind: 'aggressiveInput', filePath: 'a.test.json', calcFilePath: 'a.calc.json', calcFieldPath: 'FD/FormA/FieldA', caseName: 'case A', fieldPath: '0.inputs.0', valuePath: '0.inputs.0.value', type: 'DateTime', tomType: 'Date', constantName: 'Experimental DateTime +1 year', currentValue: '2025-01-01', proposedValue: '2026-01-01', canApply: true },
+      { rowKind: 'output', filePath: 'b.test.json', calcFilePath: 'b.calc.json', calcFieldPath: 'FD/FormB/FieldB', caseName: 'case B', fieldPath: '0.output', valuePath: '0.output.value', type: 'DateTime', tomType: 'Date', constantName: 'SomeConstant', currentValue: '2025-04-15', proposedValue: '2026-04-15', canApply: true }
+    ]
+  });
+
+  assert.equal(review.aggressiveRows.length, 1);
+  assert.equal(review.readyRows.length, 1);
+  assert.equal(review.updateCount, 2);
 });
 
 test('Unit test date roller: review UI separates ready and manual rows into tabs', () => {

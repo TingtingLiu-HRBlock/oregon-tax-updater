@@ -204,6 +204,11 @@ function getInputConstantDateRelationships(calcJson, constantsByName) {
     for (const daysBetweenDateMethodMatch of daysBetweenDateMethodMatches) {
       addRelationship(daysBetweenDateMethodMatch[1], daysBetweenDateMethodMatch[2], 'offset', 'daysBetween');
     }
+
+    const ageAsOfMatches = Array.from(expression.matchAll(/(\{\d+\})\.AgeAsOf\((\{\d+\})\)/g));
+    for (const ageAsOfMatch of ageAsOfMatches) {
+      addRelationship(ageAsOfMatch[1], ageAsOfMatch[2], 'ageAsOf', 'ageAsOf');
+    }
   }
 
   const combinedScript = lines.join(' ');
@@ -227,7 +232,10 @@ function matchesCalcOutput(node, calcJson) {
   const formMatches = !node.form || node.form === calcJson?.Form;
   const fieldMatches = !node.field || node.field === calcJson?.Field;
   const typeMatches = !node.type || node.type === calcJson?.Type;
-  const tomTypeMatches = !node.tomType || node.tomType === calcJson?.TomType;
+  const nodeTomType = typeof node.tomType === 'string' ? node.tomType : '';
+  const calcTomType = typeof calcJson?.TomType === 'string' ? calcJson.TomType : '';
+  const stringTomTypeMatches = /^String/i.test(nodeTomType) && /^String/i.test(calcTomType);
+  const tomTypeMatches = !nodeTomType || nodeTomType === calcTomType || stringTomTypeMatches;
   return entityMatches && formMatches && fieldMatches && typeMatches && tomTypeMatches;
 }
 
@@ -259,7 +267,48 @@ function flattenValues(value) {
   return [value];
 }
 
+function isYearTomType(tomType) {
+  return typeof tomType === 'string' && tomType.trim().toLowerCase() === 'year';
+}
+
+function deriveYearStringProposedValue(node, constantValue) {
+  const parsed = Number.parseInt(constantValue, 10);
+  if (!Number.isInteger(parsed)) {
+    return { supported: false, reason: 'Constant value is not a supported year.' };
+  }
+  if (node.value === null || node.value === undefined || String(node.value).trim() === '') {
+    return { supported: false, skip: true, reason: 'Current test value is blank or not a supported year.' };
+  }
+  if (!Number.isInteger(Number.parseInt(node.value, 10))) {
+    return { supported: false, reason: 'Current test value is not a supported year.' };
+  }
+  return {
+    supported: true,
+    proposedValue: typeof node.value === 'number' ? parsed : String(parsed)
+  };
+}
+
 function deriveProposedValue(node, constantValue) {
+  if (node.type === 'bool' || node.type === 'boolean' || node.type === 'Checkbox') {
+    if (typeof constantValue !== 'boolean') {
+      return { supported: false, reason: 'Constant value is not a supported boolean.' };
+    }
+    return { supported: true, proposedValue: constantValue };
+  }
+
+  if (node.type === 'bool[]' || node.type === 'boolean[]' || node.type === 'Checkbox[]') {
+    if (!Array.isArray(node.value) || node.value.length === 0) {
+      return { supported: false, skip: true, reason: 'Current test value is null or an empty boolean array.' };
+    }
+    if (typeof constantValue !== 'boolean') {
+      return { supported: false, reason: 'Constant value is not a supported boolean.' };
+    }
+    if (node.value.length !== 1) {
+      return { supported: false, reason: 'Scalar boolean cannot safely replace a multi-value boolean[] test output.' };
+    }
+    return { supported: true, proposedValue: [constantValue] };
+  }
+
   if (node.type === 'decimal') {
     const parsed = Number(constantValue);
     if (!Number.isFinite(parsed)) {
@@ -300,6 +349,12 @@ function deriveProposedValue(node, constantValue) {
     if (!Array.isArray(node.value) || node.value.length === 0) {
       return { supported: false, skip: true, reason: 'Current test value is null or an empty integer array.' };
     }
+    if (Array.isArray(constantValue)) {
+      if (constantValue.length !== node.value.length || !constantValue.every(value => Number.isFinite(Number.parseInt(value, 10)))) {
+        return { supported: false, reason: 'Constant array does not match the current integer array shape.' };
+      }
+      return { supported: true, proposedValue: constantValue.map(value => Number.parseInt(value, 10)) };
+    }
     if (node.value.length !== 1) {
       return { supported: false, reason: 'Scalar constant cannot safely replace a multi-value integer[] test output.' };
     }
@@ -311,6 +366,9 @@ function deriveProposedValue(node, constantValue) {
   }
 
   if (node.type === 'string') {
+    if (isYearTomType(node.tomType)) {
+      return deriveYearStringProposedValue(node, constantValue);
+    }
     if (typeof node.value !== 'string' || !node.value.trim()) {
       return { supported: false, skip: true, reason: 'Current test value is blank or not a string.' };
     }
@@ -464,6 +522,20 @@ function daysBetween(startValue, endValue) {
   return Math.round((end.getTime() - start.getTime()) / 86400000);
 }
 
+function ageAsOf(birthValue, asOfValue) {
+  const birthDate = parseIsoDate(birthValue);
+  const asOfDate = parseIsoDate(asOfValue);
+  if (!birthDate || !asOfDate) {
+    return null;
+  }
+  let age = asOfDate.getUTCFullYear() - birthDate.getUTCFullYear();
+  const birthdayThisYear = Date.UTC(asOfDate.getUTCFullYear(), birthDate.getUTCMonth(), birthDate.getUTCDate());
+  if (asOfDate.getTime() < birthdayThisYear) {
+    age--;
+  }
+  return age;
+}
+
 function deriveInputBoundaryProposedValue(inputNode, constantValue, options = {}) {
   const allowOffset = options.allowOffset === true;
 
@@ -534,6 +606,39 @@ function deriveInputBoundaryProposedValue(inputNode, constantValue, options = {}
   return { supported: false, skip: true, reason: `Unsupported input type for boundary update: ${inputNode?.type || 'unknown'}` };
 }
 
+function deriveAgeAsOfInputProposedValue(inputNode, constantValue) {
+  function deriveDateValue(currentValue) {
+    if (typeof currentValue !== 'string' || !currentValue.trim()) {
+      return { supported: false, skip: true, reason: 'Current input value is blank or not a date string.' };
+    }
+    if (ageAsOf(currentValue, constantValue) === null) {
+      return { supported: false, skip: true, reason: 'Current input value or maintained age cutoff is not a supported date.' };
+    }
+    const proposedValue = shiftIsoDateByYears(currentValue, 1);
+    if (!proposedValue) {
+      return { supported: false, reason: 'Could not shift the age-boundary date by one year.' };
+    }
+    return { supported: true, proposedValue };
+  }
+
+  if (inputNode?.type === 'DateTime') {
+    return deriveDateValue(inputNode.value);
+  }
+
+  if (inputNode?.type === 'DateTime[]') {
+    if (!Array.isArray(inputNode.value) || inputNode.value.length !== 1) {
+      return { supported: false, skip: true, reason: 'Current input value is not a supported single-value date array.' };
+    }
+    const derived = deriveDateValue(inputNode.value[0]);
+    if (!derived.supported) {
+      return derived;
+    }
+    return { supported: true, proposedValue: [derived.proposedValue] };
+  }
+
+  return { supported: false, skip: true, reason: `Unsupported input type for age-boundary update: ${inputNode?.type || 'unknown'}` };
+}
+
 function deriveInputYearShiftProposedValue(inputNode, constantValues) {
   const firstConstant = Array.isArray(constantValues) ? constantValues.find(value => typeof value === 'string') : '';
   const priorYearValue = shiftIsoDateByYears(firstConstant, -1);
@@ -569,6 +674,34 @@ function deriveInputYearShiftProposedValue(inputNode, constantValues) {
   }
 
   return { supported: false, skip: true, reason: `Unsupported input type for year-cycle update: ${inputNode?.type || 'unknown'}` };
+}
+
+function isDateTimeTestType(type) {
+  return typeof type === 'string' && /^DateTime(\[\])*$/i.test(type.trim());
+}
+
+function shiftDateTimeValueShape(value, deltaYears = 1) {
+  if (Array.isArray(value)) {
+    const shiftedItems = value.map(item => shiftDateTimeValueShape(item, deltaYears));
+    if (shiftedItems.some(item => item === undefined)) {
+      return undefined;
+    }
+    return shiftedItems;
+  }
+
+  const shifted = shiftIsoDateByYears(value, deltaYears);
+  return shifted || undefined;
+}
+
+function deriveAggressiveDateTimeInputProposedValue(inputNode) {
+  if (!isDateTimeTestType(inputNode?.type)) {
+    return { supported: false, skip: true, reason: `Unsupported input type for aggressive date update: ${inputNode?.type || 'unknown'}` };
+  }
+  const proposedValue = shiftDateTimeValueShape(inputNode.value, 1);
+  if (proposedValue === undefined) {
+    return { supported: false, skip: true, reason: 'Current input value is not a supported YYYY-MM-DD date shape.' };
+  }
+  return { supported: true, proposedValue };
 }
 
 function deriveInputCalendarYearShiftProposedValue(inputNode, currentYearValue, options = {}) {
@@ -670,9 +803,16 @@ function inputMatchesConstant(inputValue, constantValue) {
 function splitArguments(value) {
   const args = [];
   let depth = 0;
+  let inString = false;
   let start = 0;
   for (let index = 0; index < value.length; index++) {
     const char = value[index];
+    if (char === '"' && value[index - 1] !== '\\') {
+      inString = !inString;
+    }
+    if (inString) {
+      continue;
+    }
     if (char === '(') depth++;
     if (char === ')') depth--;
     if (char === ',' && depth === 0) {
@@ -698,14 +838,19 @@ function compareIsoDateValues(leftValue, rightValue, methodName) {
 }
 
 function evaluateExpression(expression, context) {
-  const expr = String(expression || '').trim();
+  const expr = stripOuterParens(String(expression || '').trim());
   if (!expr) return { ok: false };
+  if (expr.startsWith('!')) {
+    const arg = evaluateExpression(expr.slice(1), context);
+    if (!arg.ok) return arg;
+    return { ok: true, value: !Boolean(arg.value), maintainedNames: arg.maintainedNames || [] };
+  }
   if (/^\{\d+\}$/.test(expr)) {
     const entry = context.entriesByPlaceholder.get(expr);
     if (!entry) return { ok: false };
     if (isInputLikeDependency(entry.dependency)) {
       const inputValue = getCaseInputValue(context.testCase, entry.dependency);
-      if (inputValue === undefined || inputValue === null) return { ok: false };
+      if (inputValue === undefined) return { ok: false };
       const flattened = flattenValues(inputValue);
       return { ok: true, value: flattened.length === 1 ? flattened[0] : inputValue, maintainedNames: [] };
     }
@@ -717,7 +862,48 @@ function evaluateExpression(expression, context) {
     };
   }
 
-  let match = expr.match(/^(\{\d+\})\.(SubtractDays|AddDays)\((\d+)\)$/);
+  let match = expr.match(/^(\{\d+\}|[A-Za-z_]\w*)\.(YYYY|YY)\(\)$/);
+  if (match && match[1] !== 'Calc') {
+    const base = evaluateExpression(match[1], context);
+    if (!base.ok) return base;
+    const parseYear = value => {
+      const date = parseIsoDate(value);
+      if (date) return date.getUTCFullYear();
+      const parsed = Number.parseInt(value, 10);
+      return Number.isInteger(parsed) ? parsed : null;
+    };
+    const year = parseYear(base.value);
+    if (year === null) return { ok: false };
+    return {
+      ok: true,
+      value: match[2] === 'YY' ? String(year).slice(-2) : String(year),
+      maintainedNames: base.maintainedNames || []
+    };
+  }
+
+  match = expr.match(/^(\{\d+\}|[A-Za-z_]\w*)\.Substring\((.+)\)$/);
+  if (match && match[1] !== 'Calc') {
+    const base = evaluateExpression(match[1], context);
+    const args = splitArguments(match[2]).map(arg => evaluateExpression(arg, context));
+    if (!base.ok || !args.length || args.length > 2 || args.some(arg => !arg.ok)) return { ok: false };
+    const source = String(base.value);
+    const start = Number(args[0].value);
+    const length = args[1] ? Number(args[1].value) : undefined;
+    return {
+      ok: true,
+      value: args[1] ? source.slice(start, start + length) : source.slice(start),
+      maintainedNames: [...(base.maintainedNames || []), ...args.flatMap(arg => arg.maintainedNames || [])]
+    };
+  }
+
+  match = expr.match(/^(\{\d+\}|[A-Za-z_]\w*)\.ToString\(\)$/);
+  if (match) {
+    const base = evaluateExpression(match[1], context);
+    if (!base.ok) return base;
+    return { ok: true, value: String(base.value), maintainedNames: base.maintainedNames || [] };
+  }
+
+  match = expr.match(/^(\{\d+\})\.(SubtractDays|AddDays)\((\d+)\)$/);
   if (match) {
     const base = evaluateExpression(match[1], context);
     if (!base.ok) return base;
@@ -736,11 +922,66 @@ function evaluateExpression(expression, context) {
     return { ok: true, value: shiftedValue, maintainedNames: base.maintainedNames || [] };
   }
 
+  match = expr.match(/^(\{\d+\})\.AgeAsOf\((\{\d+\})\)$/);
+  if (match) {
+    const birth = evaluateExpression(match[1], context);
+    const asOf = evaluateExpression(match[2], context);
+    if (!birth.ok || !asOf.ok) return { ok: false };
+    const births = Array.isArray(birth.value) ? birth.value : [birth.value];
+    const asOfs = Array.isArray(asOf.value) ? asOf.value : [asOf.value];
+    const length = Math.max(births.length, asOfs.length);
+    if (![1, length].includes(births.length) || ![1, length].includes(asOfs.length)) return { ok: false };
+    const values = [];
+    for (let index = 0; index < length; index++) {
+      const age = ageAsOf(births[births.length === 1 ? 0 : index], asOfs[asOfs.length === 1 ? 0 : index]);
+      if (age === null) return { ok: false };
+      values.push(age);
+    }
+    return {
+      ok: true,
+      value: values.length === 1 ? values[0] : values,
+      maintainedNames: [...(birth.maintainedNames || []), ...(asOf.maintainedNames || [])]
+    };
+  }
+
+  match = expr.match(/^(\{\d+\})\.IsPositive\(\)$/);
+  if (match) {
+    const arg = evaluateExpression(match[1], context);
+    if (!arg.ok) return arg;
+    return { ok: true, value: Number(arg.value) > 0, maintainedNames: arg.maintainedNames || [] };
+  }
+
+  match = expr.match(/^(\{\d+\})\.IsBlank\(\)$/);
+  if (match) {
+    const arg = evaluateExpression(match[1], context);
+    if (!arg.ok) return arg;
+    return {
+      ok: true,
+      value: flattenValues(arg.value).every(value => value === null || value === undefined || String(value).trim() === ''),
+      maintainedNames: arg.maintainedNames || []
+    };
+  }
+
+  match = expr.match(/^(\{\d+\})\.Is([A-Za-z_]\w*)\(\)$/);
+  if (match) {
+    const arg = evaluateExpression(match[1], context);
+    if (!arg.ok) return arg;
+    return {
+      ok: true,
+      value: flattenValues(arg.value).some(value => String(value).split('.').pop() === match[2]),
+      maintainedNames: arg.maintainedNames || []
+    };
+  }
+
   if (Object.prototype.hasOwnProperty.call(context.variables, expr)) {
     return context.variables[expr];
   }
   if (/^-?\d+(\.\d+)?$/.test(expr)) {
     return { ok: true, value: Number(expr), maintainedNames: [] };
+  }
+  match = expr.match(/^"([\s\S]*)"$/);
+  if (match) {
+    return { ok: true, value: match[1], maintainedNames: [] };
   }
   if (/^(true|false)$/i.test(expr)) {
     return { ok: true, value: /^true$/i.test(expr), maintainedNames: [] };
@@ -765,6 +1006,17 @@ function evaluateExpression(expression, context) {
     const arg = evaluateExpression(match[1], context);
     if (!arg.ok) return arg;
     return { ok: true, value: String(arg.value), maintainedNames: arg.maintainedNames || [] };
+  }
+
+  match = expr.match(/^String\.IsNullOrWhiteSpace\((.+)\)$/);
+  if (match) {
+    const arg = evaluateExpression(match[1], context);
+    if (!arg.ok) return arg;
+    return {
+      ok: true,
+      value: flattenValues(arg.value).every(value => value === null || value === undefined || String(value).trim() === ''),
+      maintainedNames: arg.maintainedNames || []
+    };
   }
 
   match = expr.match(/^Calc\.Sum\((.+)\)$/);
@@ -827,13 +1079,13 @@ function evaluateExpression(expression, context) {
   match = expr.match(/^Calc\.Substring\((.+)\)$/);
   if (match) {
     const args = splitArguments(match[1]).map(arg => evaluateExpression(arg, context));
-    if (args.length !== 3 || args.some(arg => !arg.ok)) return { ok: false };
+    if (![2, 3].includes(args.length) || args.some(arg => !arg.ok)) return { ok: false };
     const source = String(args[0].value);
     const start = Number(args[1].value);
-    const length = Number(args[2].value);
+    const length = args[2] ? Number(args[2].value) : undefined;
     return {
       ok: true,
-      value: source.slice(start, start + length),
+      value: args[2] ? source.slice(start, start + length) : source.slice(start),
       maintainedNames: args.flatMap(arg => arg.maintainedNames || [])
     };
   }
@@ -849,6 +1101,24 @@ function evaluateExpression(expression, context) {
     };
   }
 
+  match = expr.match(/^Calc\.ConcatenateWithSpace\((.+)\)$/);
+  if (match) {
+    if (/Calc\.Concatenate\(/.test(match[1])) {
+      return { ok: false };
+    }
+    const args = splitArguments(match[1]).map(arg => evaluateExpression(arg, context));
+    if (args.some(arg => !arg.ok)) return { ok: false };
+    const parts = args
+      .flatMap(arg => flattenValues(arg.value))
+      .filter(value => value !== null && value !== undefined && String(value).trim() !== '')
+      .map(value => String(value));
+    return {
+      ok: true,
+      value: parts.join(' '),
+      maintainedNames: args.flatMap(arg => arg.maintainedNames || [])
+    };
+  }
+
   return { ok: false };
 }
 
@@ -858,7 +1128,7 @@ function getEntryRuntimeValue(entry, context, testCase) {
   }
   if (isInputLikeDependency(entry.dependency)) {
     const inputValue = getCaseInputValue(testCase, entry.dependency);
-    if (inputValue === undefined || inputValue === null) return { ok: false };
+    if (inputValue === undefined) return { ok: false };
     const flattened = flattenValues(inputValue);
     return { ok: true, value: flattened.length === 1 ? flattened[0] : inputValue };
   }
@@ -868,9 +1138,115 @@ function getEntryRuntimeValue(entry, context, testCase) {
   return { ok: false };
 }
 
+function stripOuterParens(value) {
+  let result = String(value || '').trim();
+  let changed = true;
+  while (changed && result.startsWith('(') && result.endsWith(')')) {
+    changed = false;
+    let depth = 0;
+    let wraps = true;
+    for (let index = 0; index < result.length; index++) {
+      const char = result[index];
+      if (char === '(') depth++;
+      if (char === ')') depth--;
+      if (depth === 0 && index < result.length - 1) {
+        wraps = false;
+        break;
+      }
+    }
+    if (wraps) {
+      result = result.slice(1, -1).trim();
+      changed = true;
+    }
+  }
+  return result;
+}
+
+function splitTopLevelOperator(value, operator) {
+  const parts = [];
+  let depth = 0;
+  let start = 0;
+  for (let index = 0; index < value.length; index++) {
+    const char = value[index];
+    if (char === '(') depth++;
+    if (char === ')') depth--;
+    if (depth === 0 && value.slice(index, index + operator.length) === operator) {
+      parts.push(value.slice(start, index).trim());
+      start = index + operator.length;
+      index += operator.length - 1;
+    }
+  }
+  if (parts.length) {
+    parts.push(value.slice(start).trim());
+  }
+  return parts;
+}
+
+function splitTopLevelComparison(value) {
+  const operators = ['==', '!=', '>=', '<=', '>', '<'];
+  let depth = 0;
+  let inString = false;
+  for (let index = 0; index < value.length; index++) {
+    const char = value[index];
+    if (char === '"' && value[index - 1] !== '\\') inString = !inString;
+    if (inString) continue;
+    if (char === '(') depth++;
+    if (char === ')') depth--;
+    if (depth !== 0) continue;
+    const operator = operators.find(candidate => value.slice(index, index + candidate.length) === candidate);
+    if (operator) {
+      return {
+        left: value.slice(0, index).trim(),
+        operator,
+        right: value.slice(index + operator.length).trim()
+      };
+    }
+  }
+  return null;
+}
+
 function conditionMatchesTestCase(condition, context, testCase) {
-  const trimmed = String(condition || '').trim();
-  let match = trimmed.match(/^(\{\d+\})\.(IsOnOrBefore|IsBefore|IsOnOrAfter|IsAfter)\((\{\d+\})\)$/);
+  const trimmed = stripOuterParens(condition);
+  const andParts = splitTopLevelOperator(trimmed, '&&');
+  if (andParts.length) {
+    return andParts.every(part => conditionMatchesTestCase(part, context, testCase));
+  }
+  const orParts = splitTopLevelOperator(trimmed, '||');
+  if (orParts.length) {
+    return orParts.some(part => conditionMatchesTestCase(part, context, testCase));
+  }
+
+  let match = trimmed.match(/^(.+)\s*(==|!=)\s*null$/);
+  if (match) {
+    const evaluated = evaluateExpression(match[1], context);
+    if (!evaluated.ok) return false;
+    return match[2] === '==' ? evaluated.value === null : evaluated.value !== null;
+  }
+
+  const boolExpression = evaluateExpression(trimmed, context);
+  if (boolExpression.ok && typeof boolExpression.value === 'boolean') {
+    return boolExpression.value;
+  }
+
+  const comparison = splitTopLevelComparison(trimmed);
+  if (comparison) {
+    const left = evaluateExpression(comparison.left, context);
+    const right = evaluateExpression(comparison.right, context);
+    if (!left.ok || !right.ok) return false;
+    const leftNumber = Number(left.value);
+    const rightNumber = Number(right.value);
+    const compareAsNumbers = Number.isFinite(leftNumber) && Number.isFinite(rightNumber);
+    const leftValue = compareAsNumbers ? leftNumber : String(left.value);
+    const rightValue = compareAsNumbers ? rightNumber : String(right.value);
+    if (comparison.operator === '==') return leftValue === rightValue;
+    if (comparison.operator === '!=') return leftValue !== rightValue;
+    if (comparison.operator === '>') return leftValue > rightValue;
+    if (comparison.operator === '>=') return leftValue >= rightValue;
+    if (comparison.operator === '<') return leftValue < rightValue;
+    if (comparison.operator === '<=') return leftValue <= rightValue;
+  }
+
+  match = trimmed.match(/^(\{\d+\})\.(IsOnOrBefore|IsBefore|IsOnOrAfter|IsAfter)\((\{\d+\})\)$/);
   if (match) {
     const left = getEntryRuntimeValue(context.entriesByPlaceholder.get(match[1]), context, testCase);
     const right = getEntryRuntimeValue(context.entriesByPlaceholder.get(match[3]), context, testCase);
@@ -951,13 +1327,14 @@ function getComputedReturnConstant(calcJson, constantsByName, allConstantsByName
       continue;
     }
 
-    const ifMatch = lines[index].match(/^if\s*\((.+)\)$/);
-    if (ifMatch && lines[index + 1] === '{') {
-      let closeIndex = index + 2;
+    const ifMatch = lines[index].match(/^if\s*\((.+)\)\s*(\{)?$/);
+    if (ifMatch && (ifMatch[2] || lines[index + 1] === '{')) {
+      const blockStartIndex = ifMatch[2] ? index + 1 : index + 2;
+      let closeIndex = blockStartIndex;
       while (closeIndex < lines.length && lines[closeIndex] !== '}') {
         closeIndex++;
       }
-      const blockLines = lines.slice(index + 2, closeIndex);
+      const blockLines = lines.slice(blockStartIndex, closeIndex);
       const returnLine = blockLines.find(line => /^return\s+.+;$/.test(line));
       if (returnLine && conditionMatchesTestCase(ifMatch[1], context, testCase)) {
         const evaluated = evaluateExpression(returnLine.replace(/^return\s+/, '').replace(/;$/, ''), context);
@@ -1008,16 +1385,17 @@ function getConditionalReturnValue(calcJson, constantsByName, allConstantsByName
   const context = { entriesByPlaceholder, variables: {}, testCase };
 
   for (let index = 0; index < lines.length; index++) {
-    const ifMatch = lines[index].match(/^(if|else if)\s*\((.+)\)$/);
-    if (!ifMatch || lines[index + 1] !== '{') {
+    const ifMatch = lines[index].match(/^(if|else if)\s*\((.+)\)\s*(\{)?$/);
+    if (!ifMatch || (!ifMatch[3] && lines[index + 1] !== '{')) {
       continue;
     }
 
-    let closeIndex = index + 2;
+    const blockStartIndex = ifMatch[3] ? index + 1 : index + 2;
+    let closeIndex = blockStartIndex;
     while (closeIndex < lines.length && lines[closeIndex] !== '}') {
       closeIndex++;
     }
-    const blockLines = lines.slice(index + 2, closeIndex);
+    const blockLines = lines.slice(blockStartIndex, closeIndex);
     const returnMatch = blockLines
       .find(line => /^return\s+\{\d+\};$/.test(line))
       ?.match(/^return\s+(\{\d+\});$/);
@@ -1097,11 +1475,13 @@ function testCaseExpectsBlankOutput(testCase) {
   return Boolean(testCase?.expectsBlank) || testCase?.output?.value === null || testCase?.output?.value === undefined;
 }
 
-function buildPreviewRows({ calcJson, testJson, calcFilePath, testFilePath, constantsByName, allConstantsByName = constantsByName }) {
+function buildPreviewRows({ calcJson, testJson, calcFilePath, testFilePath, constantsByName, allConstantsByName = constantsByName, includeAggressiveDateTimeInputs = false }) {
   const rows = [];
   const outputType = calcJson?.Type || '';
   const outputTomType = calcJson?.TomType || '';
   const calcFieldPath = getCalcFieldPath(calcJson);
+  const constantDependencies = getConstantDependencies(calcJson, constantsByName);
+  const calcUsesMaintainedConstant = constantDependencies.length > 0;
   const inputRelationships = getInputConstantDateRelationships(calcJson, constantsByName);
   const inputsWithDaysBetweenRelationship = new Set(inputRelationships
     .filter(relationship => relationship.source === 'daysBetween')
@@ -1181,9 +1561,11 @@ function buildPreviewRows({ calcJson, testJson, calcFilePath, testFilePath, cons
       const valuePath = [...casePathParts, 'inputs', inputEntry.index, 'value'].join('.');
       const derived = relationship.mode === 'yearCycle'
         ? deriveInputCalendarYearShiftProposedValue(inputEntry.input, relationship.compareDependency.constantValue, buildYearCycleOptions(relationship))
-        : deriveInputBoundaryProposedValue(inputEntry.input, relationship.compareDependency.constantValue, {
-            allowOffset: relationship.mode === 'offset'
-          });
+        : relationship.mode === 'ageAsOf'
+          ? deriveAgeAsOfInputProposedValue(inputEntry.input, relationship.compareDependency.constantValue)
+          : deriveInputBoundaryProposedValue(inputEntry.input, relationship.compareDependency.constantValue, {
+              allowOffset: relationship.mode === 'offset'
+            });
       if (!derived.supported) {
         if (derived.skip) {
           continue;
@@ -1277,6 +1659,44 @@ function buildPreviewRows({ calcJson, testJson, calcFilePath, testFilePath, cons
     }
 
     return Array.from(candidatesByPath.values()).filter(candidate => candidate.canApply);
+  }
+
+  function addAggressiveDateTimeInputRows(testCase, casePathParts, caseName, existingInputRows) {
+    if (!includeAggressiveDateTimeInputs || !calcUsesMaintainedConstant) {
+      return [];
+    }
+
+    const existingValuePaths = new Set(existingInputRows.map(row => row.valuePath));
+    const inputs = Array.isArray(testCase?.inputs) ? testCase.inputs : [];
+    const aggressiveRows = [];
+    inputs.forEach((input, index) => {
+      const valuePath = [...casePathParts, 'inputs', index, 'value'].join('.');
+      if (existingValuePaths.has(valuePath) || !isDateTimeTestType(input?.type)) {
+        return;
+      }
+      const derived = deriveAggressiveDateTimeInputProposedValue(input);
+      if (!derived.supported || valuesEqual(input.value, derived.proposedValue)) {
+        return;
+      }
+      aggressiveRows.push({
+        rowKind: 'aggressiveInput',
+        filePath: testFilePath,
+        calcFilePath,
+        calcFieldPath,
+        caseName,
+        fieldPath: [...casePathParts, 'inputs', index].join('.'),
+        valuePath,
+        type: input.type || '',
+        tomType: input.tomType || '',
+        constantName: 'Experimental DateTime +1 year',
+        currentValue: cloneValue(input.value),
+        proposedValue: cloneValue(derived.proposedValue),
+        canApply: true,
+        reason: ''
+      });
+    });
+    rows.push(...aggressiveRows);
+    return aggressiveRows;
   }
 
   function buildOutputEvaluationTestCase(testCase, casePathParts, inputRows) {
@@ -1374,7 +1794,8 @@ function buildPreviewRows({ calcJson, testJson, calcFilePath, testFilePath, cons
         : null;
       const casePathParts = [index];
       const inputRows = addInputComparisonRows(testCase, casePathParts, currentCaseName);
-      const outputEvaluationTestCase = buildOutputEvaluationTestCase(testCase, casePathParts, inputRows);
+      const aggressiveInputRows = addAggressiveDateTimeInputRows(testCase, casePathParts, currentCaseName, inputRows);
+      const outputEvaluationTestCase = buildOutputEvaluationTestCase(testCase, casePathParts, [...inputRows, ...aggressiveInputRows]);
       const selectedConstant = resolveReturnConstant(calcJson, constantsByName, outputEvaluationTestCase, allConstantsByName);
       visit(testCase, [index], null, testCase, selectedConstant);
     });
@@ -1383,7 +1804,8 @@ function buildPreviewRows({ calcJson, testJson, calcFilePath, testFilePath, cons
       ? testJson.name
       : null;
     const inputRows = addInputComparisonRows(testJson, [], currentCaseName);
-    const outputEvaluationTestCase = buildOutputEvaluationTestCase(testJson, [], inputRows);
+    const aggressiveInputRows = addAggressiveDateTimeInputRows(testJson, [], currentCaseName, inputRows);
+    const outputEvaluationTestCase = buildOutputEvaluationTestCase(testJson, [], [...inputRows, ...aggressiveInputRows]);
     const selectedConstant = resolveReturnConstant(calcJson, constantsByName, outputEvaluationTestCase, allConstantsByName);
     visit(testJson, [], null, testJson, selectedConstant);
   }
@@ -1409,7 +1831,7 @@ function markRawJsonNumber(value) {
 }
 
 function isDecimalFieldType(fieldType) {
-  return typeof fieldType === 'string' && /^decimal(\[\])?$/i.test(fieldType.trim());
+  return typeof fieldType === 'string' && /^decimal(\[\])*$/i.test(fieldType.trim());
 }
 
 function formatDecimalJsonNumber(value) {
@@ -1435,7 +1857,7 @@ function encodeTypedNumericValues(node) {
   for (const [key, value] of Object.entries(node)) {
     if (key === 'value' && isDecimalFieldType(node.type)) {
       if (Array.isArray(value)) {
-        encoded[key] = value.map(item => typeof item === 'number' ? markRawJsonNumber(formatDecimalJsonNumber(item)) : item);
+        encoded[key] = encodeDecimalNumericValues(value);
       } else if (typeof value === 'number') {
         encoded[key] = markRawJsonNumber(formatDecimalJsonNumber(value));
       } else {
@@ -1446,6 +1868,13 @@ function encodeTypedNumericValues(node) {
     encoded[key] = encodeTypedNumericValues(value);
   }
   return encoded;
+}
+
+function encodeDecimalNumericValues(value) {
+  if (Array.isArray(value)) {
+    return value.map(item => encodeDecimalNumericValues(item));
+  }
+  return typeof value === 'number' ? markRawJsonNumber(formatDecimalJsonNumber(value)) : value;
 }
 
 function serializeTestJson(testJson) {

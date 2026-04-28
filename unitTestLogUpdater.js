@@ -1,0 +1,390 @@
+const fs = require('fs/promises');
+const path = require('path');
+const os = require('os');
+const { parseRelaxedJson } = require('./relaxedJson');
+const { serializeTestJson } = require('./unitTestDateRoller');
+
+function sanitizeTestNamePart(value) {
+  return String(value ?? '').trim().replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+
+function buildMethodPrefix(stateCode, testFilePath, rootPath) {
+  const relative = path.relative(rootPath, testFilePath).replace(/\\/g, '/').replace(/\.test\.json$/i, '');
+  return `${stateCode}_${relative.replace(/[/.]+/g, '_')}`;
+}
+
+async function collectTestJsonFiles(rootPath) {
+  const found = [];
+  async function walk(currentPath) {
+    const entries = await fs.readdir(currentPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(currentPath, entry.name);
+      if (entry.isDirectory()) {
+        if (['bin', 'obj', 'node_modules', '.git'].includes(entry.name)) continue;
+        await walk(fullPath);
+        continue;
+      }
+      if (entry.isFile() && entry.name.endsWith('.test.json')) {
+        found.push(fullPath);
+      }
+    }
+  }
+  await walk(rootPath);
+  return found;
+}
+
+async function getLatestLogPath(regulatoryYear) {
+  const logRoot = path.join(os.tmpdir(), `Omnistudio-${regulatoryYear}`, 'log');
+  const entries = await fs.readdir(logRoot, { withFileTypes: true });
+  const files = await Promise.all(entries
+    .filter(entry => entry.isFile())
+    .map(async entry => {
+      const fullPath = path.join(logRoot, entry.name);
+      const stat = await fs.stat(fullPath);
+      return { fullPath, mtimeMs: stat.mtimeMs };
+    }));
+  files.sort((left, right) => right.mtimeMs - left.mtimeMs);
+  if (!files.length) {
+    throw new Error(`No log files found under ${logRoot}.`);
+  }
+  return files[0].fullPath;
+}
+
+function getLatestFailedRunLines(logText, stateCode = '') {
+  const lines = String(logText || '').split(/\r?\n/);
+  const statePattern = stateCode ? new RegExp(`\\b${stateCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}_`, 'i') : null;
+  const summaryIndexes = lines
+    .map((line, index) => /Failed!\s+-\s+Failed:\s+\d+/i.test(line) ? index : -1)
+    .filter(index => index >= 0)
+    .filter(index => {
+      if (!statePattern) return true;
+      let startIndex = 0;
+      for (let lineIndex = index; lineIndex >= 0; lineIndex--) {
+        if (/Starting test execution/i.test(lines[lineIndex]) || /Preparing unit tests execution/i.test(lines[lineIndex])) {
+          startIndex = lineIndex;
+          break;
+        }
+      }
+      return lines.slice(startIndex, index + 1).some(line => statePattern.test(line));
+    });
+  const summaryIndex = summaryIndexes.pop();
+  if (summaryIndex === undefined) {
+    return [];
+  }
+  let startIndex = 0;
+  for (let index = summaryIndex; index >= 0; index--) {
+    if (/Starting test execution/i.test(lines[index]) || /Preparing unit tests execution/i.test(lines[index])) {
+      startIndex = index;
+      break;
+    }
+  }
+  return lines.slice(startIndex, summaryIndex + 1);
+}
+
+function parseFailureAssertions(logText, stateCode = '') {
+  const lines = getLatestFailedRunLines(logText, stateCode);
+  const failures = [];
+  let current = null;
+
+  for (const line of lines) {
+    const failedMatch = line.match(/\bFailed\s+([A-Z]{2}_[^\s\[]+)/);
+    if (failedMatch && stateCode && !failedMatch[1].startsWith(`${stateCode}_`)) {
+      current = null;
+      continue;
+    }
+    if (failedMatch) {
+      current = { testName: failedMatch[1] };
+      continue;
+    }
+    if (!current) {
+      continue;
+    }
+    const assertMatch = line.match(/Expected:<([\s\S]*?)>\.\s+Actual:<([\s\S]*?)>\./);
+    if (assertMatch) {
+      const indexMatch = line.match(/Element at index\s+(\d+)/i);
+      failures.push({
+        testName: current.testName,
+        expectedRaw: assertMatch[1],
+        actualRaw: assertMatch[2],
+        elementIndex: indexMatch ? Number(indexMatch[1]) : null
+      });
+      current = null;
+    }
+  }
+
+  return failures;
+}
+
+function findMatchingTestCase(testJson, caseName) {
+  const cases = Array.isArray(testJson)
+    ? testJson.map((testCase, index) => ({ testCase, pathParts: [index] }))
+    : [{ testCase: testJson, pathParts: [] }];
+  const sanitizedCase = sanitizeTestNamePart(caseName);
+  return cases.find(candidate => String(candidate.testCase?.name) === caseName)
+    || cases.find(candidate => sanitizeTestNamePart(candidate.testCase?.name) === sanitizedCase)
+    || null;
+}
+
+function convertLogValue(rawValue, currentValue) {
+  const trimmed = String(rawValue ?? '').trim();
+  if (/^\(Is Blank\)$/i.test(trimmed)) {
+    return currentValue === null ? null : '';
+  }
+  if (/^\(Not Blank\)$/i.test(trimmed)) {
+    return Symbol.for('unit-test-log-not-blank');
+  }
+  if (/^Blank$/i.test(trimmed)) {
+    return currentValue === null ? null : currentValue === 'Blank' ? 'Blank' : '';
+  }
+  if (typeof currentValue === 'number') {
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : trimmed;
+  }
+  if (typeof currentValue === 'boolean') {
+    return /^true$/i.test(trimmed);
+  }
+  if (typeof currentValue === 'string') {
+    const dateMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+\d{1,2}:\d{2}:\d{2}\s+[AP]M)?$/i);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(currentValue) && dateMatch) {
+      return `${dateMatch[3]}-${String(dateMatch[1]).padStart(2, '0')}-${String(dateMatch[2]).padStart(2, '0')}`;
+    }
+  }
+  return trimmed;
+}
+
+function valuesEqual(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function isNumericArrayOutputType(type) {
+  return typeof type === 'string' && /^(decimal|int|integer)(\[\])+$/i.test(type.trim());
+}
+
+function parseCommaSeparatedNumericArray(rawValue, type) {
+  const trimmed = String(rawValue ?? '').trim();
+  if (!isNumericArrayOutputType(type) || !trimmed.includes(',')) {
+    return null;
+  }
+  const parts = trimmed.split(',').map(part => part.trim());
+  if (!parts.length || parts.some(part => !part || !Number.isFinite(Number(part)))) {
+    return null;
+  }
+  return parts.map(part => Number(part));
+}
+
+function isNullOnlyLogValue(rawValue) {
+  return /^\(null\)$/i.test(String(rawValue ?? '').trim());
+}
+
+function flattenScalarPaths(value, pathParts = []) {
+  if (!Array.isArray(value)) {
+    return [{ pathParts, value }];
+  }
+  return value.flatMap((item, index) => flattenScalarPaths(item, [...pathParts, index]));
+}
+
+function setValueAtPath(root, valuePath, nextValue) {
+  const parts = valuePath.split('.');
+  let current = root;
+  for (let index = 0; index < parts.length - 1; index++) {
+    const part = /^\d+$/.test(parts[index]) ? Number(parts[index]) : parts[index];
+    current = current[part];
+    if (current === undefined) {
+      throw new Error(`Path not found: ${valuePath}`);
+    }
+  }
+  const lastPart = /^\d+$/.test(parts[parts.length - 1]) ? Number(parts[parts.length - 1]) : parts[parts.length - 1];
+  current[lastPart] = nextValue;
+}
+
+function buildFailureRow(failure, filePath, testJson) {
+  const prefix = failure.prefix;
+  const caseName = failure.testName === prefix ? '' : failure.testName.slice(prefix.length + 1);
+  const match = findMatchingTestCase(testJson, caseName);
+  if (!match) {
+    return { ...failure, filePath, caseName, canApply: false, reason: `Could not find a unique test case named ${caseName}.` };
+  }
+  const output = match.testCase?.output;
+  if (!output || !Object.prototype.hasOwnProperty.call(output, 'value')) {
+    return { ...failure, filePath, caseName, canApply: false, reason: 'Matched test case has no output.value.' };
+  }
+
+  const basePath = [...match.pathParts, 'output', 'value'].join('.');
+  if (isNullOnlyLogValue(failure.actualRaw)) {
+    return { ...failure, filePath, caseName, fieldPath: [...match.pathParts, 'output'].join('.') || 'output', currentValue: output.value, proposedValue: '', canApply: false, reason: 'Log actual value is null; skipping automatic update to avoid invalid generated tests.' };
+  }
+
+  if (Array.isArray(output.value)) {
+    const expectedArray = !Number.isInteger(failure.elementIndex)
+      ? parseCommaSeparatedNumericArray(failure.expectedRaw, output.type)
+      : null;
+    const proposedArray = !Number.isInteger(failure.elementIndex)
+      ? parseCommaSeparatedNumericArray(failure.actualRaw, output.type)
+      : null;
+    if (expectedArray && proposedArray) {
+      if (!valuesEqual(output.value, expectedArray)) {
+        return { ...failure, filePath, caseName, fieldPath: [...match.pathParts, 'output'].join('.') || 'output', currentValue: output.value, proposedValue: '', canApply: false, reason: 'Current output no longer matches the log expected value.' };
+      }
+      return {
+        ...failure,
+        rowKind: 'logOutput',
+        filePath,
+        calcFieldPath: `${output.entity || ''}/${output.form || ''}/${output.field || ''}`,
+        caseName,
+        fieldPath: [...match.pathParts, 'output'].join('.') || 'output',
+        valuePath: basePath,
+        type: output.type || '',
+        tomType: output.tomType || '',
+        constantName: 'Runtime actual from unit test log',
+        currentValue: output.value,
+        proposedValue: proposedArray,
+        canApply: true,
+        reason: ''
+      };
+    }
+
+    const scalarPaths = flattenScalarPaths(output.value);
+    if (proposedArray && scalarPaths.length === 1) {
+      const currentElement = scalarPaths[0].value;
+      const expectedValue = convertLogValue(failure.expectedRaw, currentElement);
+      if (!valuesEqual(currentElement, expectedValue)) {
+        return { ...failure, filePath, caseName, fieldPath: [...match.pathParts, 'output'].join('.') || 'output', currentValue: output.value, proposedValue: '', canApply: false, reason: 'Current output no longer matches the log expected value.' };
+      }
+      return {
+        ...failure,
+        rowKind: 'logOutput',
+        filePath,
+        calcFieldPath: `${output.entity || ''}/${output.form || ''}/${output.field || ''}`,
+        caseName,
+        fieldPath: [...match.pathParts, 'output'].join('.') || 'output',
+        valuePath: basePath,
+        type: output.type || '',
+        tomType: output.tomType || '',
+        constantName: 'Runtime actual from unit test log',
+        currentValue: output.value,
+        proposedValue: proposedArray,
+        canApply: true,
+        reason: ''
+      };
+    }
+
+    const scalarMatch = Number.isInteger(failure.elementIndex)
+      ? scalarPaths[failure.elementIndex]
+      : scalarPaths.length === 1 ? scalarPaths[0] : null;
+    if (!scalarMatch) {
+      return { ...failure, filePath, caseName, fieldPath: [...match.pathParts, 'output'].join('.') || 'output', canApply: false, reason: 'Could not safely choose an output array element.' };
+    }
+    const currentElement = scalarMatch.value;
+    const expectedValue = convertLogValue(failure.expectedRaw, currentElement);
+    const proposedElement = convertLogValue(failure.actualRaw, currentElement);
+    if (typeof proposedElement === 'symbol') {
+      return { ...failure, filePath, caseName, fieldPath: [...match.pathParts, 'output'].join('.') || 'output', currentValue: output.value, proposedValue: '', canApply: false, reason: 'Log actual value only says the output is not blank.' };
+    }
+    if (!valuesEqual(currentElement, expectedValue)) {
+      return { ...failure, filePath, caseName, fieldPath: [...match.pathParts, 'output'].join('.') || 'output', currentValue: output.value, proposedValue: '', canApply: false, reason: 'Current output no longer matches the log expected value.' };
+    }
+    return {
+      ...failure,
+      rowKind: 'logOutput',
+      filePath,
+      calcFieldPath: `${output.entity || ''}/${output.form || ''}/${output.field || ''}`,
+      caseName,
+      fieldPath: [...match.pathParts, 'output'].join('.') || 'output',
+      valuePath: [basePath, ...scalarMatch.pathParts].join('.'),
+      type: output.type || '',
+      tomType: output.tomType || '',
+      constantName: 'Runtime actual from unit test log',
+      currentValue: currentElement,
+      proposedValue: proposedElement,
+      canApply: true,
+      reason: ''
+    };
+  }
+
+  const expectedValue = convertLogValue(failure.expectedRaw, output.value);
+  const proposedValue = convertLogValue(failure.actualRaw, output.value);
+  if (typeof proposedValue === 'symbol') {
+    return { ...failure, filePath, caseName, fieldPath: [...match.pathParts, 'output'].join('.') || 'output', currentValue: output.value, proposedValue: '', canApply: false, reason: 'Log actual value only says the output is not blank.' };
+  }
+  if (!valuesEqual(output.value, expectedValue)) {
+    return { ...failure, filePath, caseName, fieldPath: [...match.pathParts, 'output'].join('.') || 'output', currentValue: output.value, proposedValue: '', canApply: false, reason: 'Current output no longer matches the log expected value.' };
+  }
+  return {
+    ...failure,
+    rowKind: 'logOutput',
+    filePath,
+    calcFieldPath: `${output.entity || ''}/${output.form || ''}/${output.field || ''}`,
+    caseName,
+    fieldPath: [...match.pathParts, 'output'].join('.') || 'output',
+    valuePath: basePath,
+    type: output.type || '',
+    tomType: output.tomType || '',
+    constantName: 'Runtime actual from unit test log',
+    currentValue: output.value,
+    proposedValue,
+    canApply: true,
+    reason: ''
+  };
+}
+
+async function buildLogUpdatePreview({ rootPath, stateCode, logPath, regulatoryYear }) {
+  const effectiveLogPath = logPath || await getLatestLogPath(regulatoryYear);
+  const logText = await fs.readFile(effectiveLogPath, 'utf-8');
+  const failures = parseFailureAssertions(logText, stateCode);
+  const testFiles = await collectTestJsonFiles(rootPath);
+  const prefixes = testFiles
+    .map(filePath => ({ filePath, prefix: buildMethodPrefix(stateCode, filePath, rootPath) }))
+    .sort((left, right) => right.prefix.length - left.prefix.length);
+  const rows = [];
+
+  for (const failure of failures) {
+    const matched = prefixes.find(candidate => failure.testName === candidate.prefix || failure.testName.startsWith(`${candidate.prefix}_`));
+    if (!matched) {
+      rows.push({ ...failure, filePath: '', caseName: '', canApply: false, reason: 'Could not map failed test name to a unit test JSON file.' });
+      continue;
+    }
+    const raw = await fs.readFile(matched.filePath, 'utf-8');
+    const testJson = parseRelaxedJson(raw);
+    rows.push(buildFailureRow({ ...failure, prefix: matched.prefix }, matched.filePath, testJson));
+  }
+
+  return {
+    success: true,
+    logPath: effectiveLogPath,
+    failureCount: failures.length,
+    updateCount: rows.filter(row => row.canApply).length,
+    reviewCount: rows.filter(row => !row.canApply).length,
+    rows
+  };
+}
+
+async function applyLogUpdateRows(rows) {
+  const rowsByFile = new Map();
+  for (const row of rows.filter(candidate => candidate?.canApply && candidate.filePath && candidate.valuePath)) {
+    if (!rowsByFile.has(row.filePath)) rowsByFile.set(row.filePath, []);
+    rowsByFile.get(row.filePath).push(row);
+  }
+  if (!rowsByFile.size) {
+    throw new Error('No log-derived output rows were eligible for automatic update.');
+  }
+
+  let updatedFileCount = 0;
+  let updatedValueCount = 0;
+  for (const [filePath, fileRows] of rowsByFile.entries()) {
+    const raw = await fs.readFile(filePath, 'utf-8');
+    const parsed = parseRelaxedJson(raw);
+    fileRows.forEach(row => setValueAtPath(parsed, row.valuePath, row.proposedValue));
+    await fs.writeFile(filePath, serializeTestJson(parsed), 'utf-8');
+    updatedFileCount++;
+    updatedValueCount += fileRows.length;
+  }
+  return { success: true, updatedFileCount, updatedValueCount };
+}
+
+module.exports = {
+  parseFailureAssertions,
+  buildMethodPrefix,
+  buildLogUpdatePreview,
+  applyLogUpdateRows,
+  convertLogValue
+};
