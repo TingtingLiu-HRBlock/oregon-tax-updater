@@ -33,56 +33,6 @@ test('Unit test date roller: detects a direct constant-return calc dependency', 
   assert.equal(directConstant.placeholder, '{1}');
 });
 
-test('Unit test date roller: experimental mode shifts DateTime inputs for calcs using maintained constants', () => {
-  const calcJson = {
-    Entity: 'FD',
-    Form: 'FormExample',
-    Field: 'SomeOutput',
-    Type: 'decimal',
-    Dependencies: [
-      { FieldType: 'Input', Entity: 'FD', Form: 'FormExample', Field: 'SomeDate', Type: 'DateTime', FieldRef: 'FD/FormExample/SomeDate' },
-      { FieldType: 'Constant', FieldRef: 'FD/Constant/CurrentTaxYear', Constant: 'CurrentTaxYear' }
-    ],
-    Custom: [
-      'return null;'
-    ]
-  };
-  const testJson = [
-    {
-      name: 'T1',
-      inputs: [
-        { entity: 'FD', form: 'FormExample', field: 'SomeDate', type: 'DateTime', tomType: 'Date', value: '2025-04-15' },
-        { entity: 'FD', form: 'FormExample', field: 'OtherDates', type: 'DateTime[][]', tomType: 'Date', value: [['2025-01-01'], ['2025-12-31']] }
-      ],
-      output: { entity: 'FD', form: 'FormExample', field: 'SomeOutput', type: 'decimal', value: 0 }
-    }
-  ];
-
-  const defaultPreview = buildPreviewRows({
-    calcJson,
-    testJson,
-    calcFilePath: 'SomeOutput.calc.json',
-    testFilePath: 'SomeOutput.test.json',
-    constantsByName: { CurrentTaxYear: '2026' }
-  });
-  assert.deepEqual(defaultPreview.rows, []);
-
-  const experimentalPreview = buildPreviewRows({
-    calcJson,
-    testJson,
-    calcFilePath: 'SomeOutput.calc.json',
-    testFilePath: 'SomeOutput.test.json',
-    constantsByName: { CurrentTaxYear: '2026' },
-    includeAggressiveDateTimeInputs: true
-  });
-
-  assert.equal(experimentalPreview.rows.length, 2);
-  assert.deepEqual(experimentalPreview.rows.map(row => row.rowKind), ['aggressiveInput', 'aggressiveInput']);
-  assert.equal(experimentalPreview.rows[0].valuePath, '0.inputs.0.value');
-  assert.equal(experimentalPreview.rows[0].proposedValue, '2026-04-15');
-  assert.deepEqual(experimentalPreview.rows[1].proposedValue, [['2026-01-01'], ['2026-12-31']]);
-});
-
 test('Unit test date roller: previews constant-driven DateTime[] unit test updates', () => {
   const calcJson = {
     Entity: 'OH',
@@ -1359,6 +1309,131 @@ test('Unit test date roller: previews input boundary updates for direct YOY cons
   assert.equal(preview.rows[5].proposedValue, '2026-08-20');
 });
 
+test('Unit test date roller: preserves ISO date-time suffixes for between-boundary input returns', () => {
+  const preview = buildPreviewRows({
+    calcJson: {
+      Entity: 'FD',
+      Form: 'Form1040ES.EstTaxPaymentRecord',
+      Field: 'Q4FirstPaymentDt',
+      Type: 'DateTime',
+      TomType: 'Date',
+      Dependencies: [
+        { Entity: 'FD', Form: 'Form1040.EstimatedTaxPayment', Field: 'ThirdQuarterEstimatedTaxDate', Type: 'DateTime', TomType: 'Date', FieldType: 'Input', FieldRef: 'FD/Form1040.EstimatedTaxPayment/ThirdQuarterEstimatedTaxDate' },
+        { FieldType: 'Constant', FieldRef: 'FD/Constant/Q4StartDate', Constant: 'Q4StartDate' },
+        { FieldType: 'Constant', FieldRef: 'FD/Constant/Q4EndDate', Constant: 'Q4EndDate' }
+      ],
+      Custom: [
+        'if ({0} >= {1} && {0} <= {2})',
+        '{',
+        '    return {0};',
+        '}',
+        'else',
+        '{',
+        '    return null;',
+        '}'
+      ]
+    },
+    testJson: [
+      {
+        name: 'DateAtStartOfQ4',
+        inputs: [
+          {
+            entity: 'FD',
+            form: 'Form1040.EstimatedTaxPayment',
+            field: 'ThirdQuarterEstimatedTaxDate',
+            type: 'DateTime',
+            tomType: 'Date',
+            value: '2025-09-16T00:00:00'
+          }
+        ],
+        output: {
+          entity: 'FD',
+          form: 'Form1040ES.EstTaxPaymentRecord',
+          field: 'Q4FirstPaymentDt',
+          type: 'DateTime',
+          tomType: 'Date',
+          value: '2025-09-16T00:00:00'
+        }
+      }
+    ],
+    calcFilePath: 'Q4FirstPaymentDt.calc.json',
+    testFilePath: 'Q4FirstPaymentDt.test.json',
+    constantsByName: {
+      Q4StartDate: '2026-09-16',
+      Q4EndDate: '2027-01-15'
+    }
+  });
+
+  assert.equal(preview.rows.length, 2);
+  assert.equal(preview.rows[0].rowKind, 'input');
+  assert.equal(preview.rows[0].fieldPath, '0.inputs.0');
+  assert.equal(preview.rows[0].proposedValue, '2026-09-16T00:00:00');
+  assert.equal(preview.rows[1].rowKind, 'output');
+  assert.equal(preview.rows[1].fieldPath, '0.output');
+  assert.equal(preview.rows[1].proposedValue, '2026-09-16T00:00:00');
+});
+
+test('Unit test date roller: updates AgeIs AsOf outputs without auto-shifting birthdate inputs', () => {
+  const preview = buildPreviewRows({
+    calcJson: {
+      Entity: 'FD',
+      Form: 'Filer',
+      Field: 'TaxPayer.AgeGreater59Half',
+      Type: 'bool',
+      TomType: 'Boolean',
+      Dependencies: [
+        { Entity: 'FD', Form: 'Filer', Field: 'TaxPayer.DateOfBirth', Type: 'DateTime', TomType: 'Date', FieldType: 'Input', FieldRef: 'FD/Filer/TaxPayer.DateOfBirth' },
+        { FieldType: 'Constant', FieldRef: 'FD/Constant/Form5329EarlyDistributionsAgeLimit', Constant: 'Form5329EarlyDistributionsAgeLimit' },
+        { FieldType: 'Constant', FieldRef: 'FD/Constant/LastDayOfYear', Constant: 'LastDayOfYear' }
+      ],
+      Custom: [
+        'if ({0} != null)',
+        '{',
+        '    return {0}.AgeIs({1}).AsOf({2});',
+        '}',
+        'return null;'
+      ]
+    },
+    testJson: [
+      {
+        name: 'AgeLessThan59HalfOnLastDay',
+        inputs: [
+          {
+            entity: 'FD',
+            form: 'Filer',
+            field: 'TaxPayer.DateOfBirth',
+            type: 'DateTime',
+            tomType: 'Date',
+            value: '1966-07-01'
+          }
+        ],
+        output: {
+          entity: 'FD',
+          form: 'Filer',
+          field: 'TaxPayer.AgeGreater59Half',
+          type: 'bool',
+          tomType: 'Boolean',
+          value: false
+        }
+      }
+    ],
+    calcFilePath: 'AgeGreater59Half.calc.json',
+    testFilePath: 'AgeGreater59Half.test.json',
+    constantsByName: {
+      LastDayOfYear: '2026-12-31'
+    },
+    allConstantsByName: {
+      Form5329EarlyDistributionsAgeLimit: '59.5',
+      LastDayOfYear: '2026-12-31'
+    }
+  });
+
+  assert.equal(preview.rows.length, 1);
+  assert.equal(preview.rows[0].rowKind, 'output');
+  assert.equal(preview.rows[0].fieldPath, '0.output');
+  assert.equal(preview.rows[0].proposedValue, true);
+});
+
 test('Unit test date roller: preserves DateTime[] offsets for calc date helper comparisons', () => {
   const preview = buildPreviewRows({
     calcJson: {
@@ -1872,6 +1947,130 @@ test('Unit test date roller: shape-preserving DateTime[][] updates fill every ma
 
   assert.equal(derived.supported, true);
   assert.deepEqual(derived.proposedValue, [['2026-04-15'], ['2026-04-15']]);
+});
+
+test('Unit test date roller: shape-preserving bool[][] updates fill every matrix cell', () => {
+  const derived = deriveProposedValue({
+    type: 'bool[][]',
+    tomType: 'Boolean',
+    value: [[false]]
+  }, true);
+
+  assert.equal(derived.supported, true);
+  assert.deepEqual(derived.proposedValue, [[true]]);
+});
+
+test('Unit test date roller: previews computed bool[][] outputs from maintained TaxYear comparisons', () => {
+  const preview = buildPreviewRows({
+    calcJson: {
+      Entity: 'FD',
+      Form: 'Form1040ScheduleA.StateIncomeTaxes.Estimates',
+      Field: 'DatePaid',
+      Type: 'bool[][]',
+      TomType: 'Boolean',
+      Dependencies: [
+        { Entity: 'FD', Form: 'Form1040ScheduleA.StateIncomeTaxes.Estimates', Field: 'Year', Type: 'string[][]', TomType: 'Year', FieldType: 'Calculated', FieldRef: 'FD/Form1040ScheduleA.StateIncomeTaxes.Estimates/Year' },
+        { FieldType: 'Constant', FieldRef: 'FD/Constant/TaxYear', Constant: 'TaxYear' },
+        { Entity: 'FD', Form: 'Form1040ScheduleA.StateIncomeTaxes', Field: 'StateName', Type: 'string[]', TomType: 'String', FieldType: 'Input', FieldRef: 'FD/Form1040ScheduleA.StateIncomeTaxes/StateName' },
+        { Entity: 'FD', Form: 'Form1040ScheduleA.StateIncomeTaxes.Estimates', Field: 'PaymentType', Type: 'StatePaymentType[][]', TomType: 'StatePaymentType', FieldType: 'Input', FieldRef: 'FD/Form1040ScheduleA.StateIncomeTaxes.Estimates/PaymentType' }
+      ],
+      Custom: [
+        'if (!{2}.IsBlank() && {3}.IsExtensionPaymentmadein2021() && {0} == {1})',
+        '{',
+        '    return true;',
+        '}',
+        'else if ( {0} == null || {0} == "" ||{0} == {1} && !{3}.IsExtensionPaymentmadein2021())',
+        '{',
+        '    return true;',
+        '}',
+        'else return false;'
+      ]
+    },
+    testJson: [
+      {
+        name: 'Test2',
+        inputs: [
+          { entity: 'FD', form: 'Form1040ScheduleA.StateIncomeTaxes.Estimates', field: 'Year', type: 'string[][]', tomType: 'Year', value: [['2026']] },
+          { entity: 'FD', form: 'Form1040ScheduleA.StateIncomeTaxes', field: 'StateName', type: 'string[]', tomType: 'String', value: ['ABC'] },
+          { entity: 'FD', form: 'Form1040ScheduleA.StateIncomeTaxes.Estimates', field: 'PaymentType', type: 'StatePaymentType[][]', tomType: 'StatePaymentType', value: [['ExtensionPaymentmadein2021']] }
+        ],
+        output: {
+          entity: 'FD',
+          form: 'Form1040ScheduleA.StateIncomeTaxes.Estimates',
+          field: 'DatePaid',
+          type: 'bool[][]',
+          tomType: 'Boolean',
+          value: [[false]]
+        }
+      }
+    ],
+    calcFilePath: 'DatePaid.calc.json',
+    testFilePath: 'DatePaid.test.json',
+    constantsByName: {
+      TaxYear: '2026'
+    }
+  });
+
+  assert.equal(preview.rows.length, 1);
+  assert.equal(preview.rows[0].rowKind, 'output');
+  assert.equal(preview.rows[0].fieldPath, '0.output');
+  assert.deepEqual(preview.rows[0].currentValue, [[false]]);
+  assert.deepEqual(preview.rows[0].proposedValue, [[true]]);
+  assert.equal(preview.rows[0].canApply, true);
+});
+
+test('Unit test date roller: previews computed int[][] outputs from AgeAsOf expressions', () => {
+  const preview = buildPreviewRows({
+    calcJson: {
+      Entity: 'FD',
+      Form: 'Form1040ScheduleC.PYStartupCostInformation',
+      Field: 'AssetLife',
+      Type: 'int[][]',
+      TomType: 'Integer',
+      Dependencies: [
+        { Entity: 'FD', Form: 'Form1040ScheduleC.PYStartupCostInformation', Field: 'DateIncurred', Type: 'DateTime[][]', TomType: 'Date', FieldType: 'Input', FieldRef: 'FD/Form1040ScheduleC.PYStartupCostInformation/DateIncurred' },
+        { FieldType: 'Constant', FieldRef: 'FD/Constant/FirstDayOfNextYear', Constant: 'FirstDayOfNextYear' }
+      ],
+      Custom: [
+        'return {0}.AgeAsOf({1});'
+      ]
+    },
+    testJson: [
+      {
+        name: 'A1',
+        inputs: [
+          {
+            entity: 'FD',
+            form: 'Form1040ScheduleC.PYStartupCostInformation',
+            field: 'DateIncurred',
+            type: 'DateTime[][]',
+            tomType: 'Date',
+            value: [['2023-12-31']]
+          }
+        ],
+        output: {
+          entity: 'FD',
+          form: 'Form1040ScheduleC.PYStartupCostInformation',
+          field: 'AssetLife',
+          type: 'int[][]',
+          tomType: 'Integer',
+          value: [[2]]
+        }
+      }
+    ],
+    calcFilePath: 'AssetLife.calc.json',
+    testFilePath: 'AssetLife.test.json',
+    constantsByName: {
+      FirstDayOfNextYear: '2027-01-01'
+    }
+  });
+
+  assert.equal(preview.rows.length, 1);
+  assert.equal(preview.rows[0].rowKind, 'output');
+  assert.equal(preview.rows[0].fieldPath, '0.output');
+  assert.deepEqual(preview.rows[0].currentValue, [[2]]);
+  assert.deepEqual(preview.rows[0].proposedValue, [[3]]);
+  assert.equal(preview.rows[0].canApply, true);
 });
 
 test('Unit test date roller: flags multi-value DateTime[] replacements for manual review', () => {

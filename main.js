@@ -67,7 +67,8 @@ async function saveAllJsonPaths(allPaths) {
 ipcMain.handle('read-json-file-paths', async (event, stateCode, regulatoryYear, workflowKey = 'standard') => {
   const all = await loadAllJsonPaths();
   const key = buildStorageKey(stateCode, regulatoryYear, workflowKey);
-  if (all[key]) return normalizeSavedPaths(stateCode, regulatoryYear, workflowKey, all[key]);
+  const savedPaths = normalizeSavedPaths(stateCode, regulatoryYear, workflowKey, all[key]);
+  if (savedPaths && Object.keys(savedPaths).length > 0) return savedPaths;
   return normalizeSavedPaths(stateCode, regulatoryYear, workflowKey, buildDefaultPaths(stateCode, regulatoryYear, workflowKey));
 });
 
@@ -100,6 +101,72 @@ ipcMain.handle('select-json-file', async (event, type, currentPath) => {
         ]
   });
   return result.canceled ? null : result.filePaths[0];
+});
+
+ipcMain.handle('read-unit-test-calc-file', async (event, payload) => {
+  try {
+    const calcRootPath = path.resolve(payload?.calcRootPath || '');
+    const calcFilePath = path.resolve(payload?.calcFilePath || '');
+    const relativePath = path.relative(calcRootPath, calcFilePath);
+    if (!calcRootPath || !calcFilePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+      throw new Error('Calc file must be inside the selected calc root folder.');
+    }
+    if (!/\.calc\.json$/i.test(calcFilePath)) {
+      throw new Error('Only .calc.json files can be opened from this view.');
+    }
+    const raw = await fs.readFile(calcFilePath, 'utf-8');
+    return {
+      success: true,
+      filePath: calcFilePath,
+      relativePath,
+      content: raw
+    };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+});
+
+ipcMain.handle('read-unit-test-review-files', async (event, payload) => {
+  try {
+    const readRootedFile = async ({ rootPath, filePath, extensionPattern, rootLabel, extensionLabel }) => {
+      const resolvedRootPath = path.resolve(rootPath || '');
+      const resolvedFilePath = path.resolve(filePath || '');
+      const relativePath = path.relative(resolvedRootPath, resolvedFilePath);
+      if (!rootPath || !filePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+        throw new Error(`${rootLabel} file must be inside the selected ${rootLabel.toLowerCase()} root folder.`);
+      }
+      if (!extensionPattern.test(resolvedFilePath)) {
+        throw new Error(`Only ${extensionLabel} files can be opened from this view.`);
+      }
+      const raw = await fs.readFile(resolvedFilePath, 'utf-8');
+      return {
+        filePath: resolvedFilePath,
+        relativePath,
+        content: raw
+      };
+    };
+
+    const [calc, unitTest] = await Promise.all([
+      readRootedFile({
+        rootPath: payload?.calcRootPath,
+        filePath: payload?.calcFilePath,
+        extensionPattern: /\.calc\.json$/i,
+        rootLabel: 'Calc',
+        extensionLabel: '.calc.json'
+      }),
+      readRootedFile({
+        rootPath: payload?.testRootPath,
+        filePath: payload?.testFilePath,
+        extensionPattern: /\.test\.json$/i,
+        rootLabel: 'Unit test',
+        extensionLabel: '.test.json'
+      })
+    ]);
+
+    return { success: true, calc, unitTest };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
 });
 
 ipcMain.handle('read-current-json-values', async (event, filePath) => {
@@ -402,8 +469,7 @@ ipcMain.handle('preview-unit-test-date-roll', async (event, payload) => {
           calcFilePath,
           testFilePath,
           constantsByName,
-          allConstantsByName,
-          includeAggressiveDateTimeInputs: payload.includeAggressiveDateTimeInputs === true
+          allConstantsByName
         });
         previewRows.push(...preview.rows);
       } catch (error) {

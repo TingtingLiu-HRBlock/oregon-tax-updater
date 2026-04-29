@@ -209,6 +209,7 @@ function getInputConstantDateRelationships(calcJson, constantsByName) {
     for (const ageAsOfMatch of ageAsOfMatches) {
       addRelationship(ageAsOfMatch[1], ageAsOfMatch[2], 'ageAsOf', 'ageAsOf');
     }
+
   }
 
   const combinedScript = lines.join(' ');
@@ -254,6 +255,18 @@ function isStringMatrix(value) {
   return Array.isArray(value)
     && value.length > 0
     && value.every(row => Array.isArray(row) && row.length > 0 && row.every(item => isNonEmptyString(item)));
+}
+
+function isBooleanMatrix(value) {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.every(row => Array.isArray(row) && row.length > 0 && row.every(item => typeof item === 'boolean'));
+}
+
+function isNumericMatrix(value) {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.every(row => Array.isArray(row) && row.length > 0 && row.every(item => Number.isFinite(Number(item))));
 }
 
 function fillMatrixShape(matrix, fillValue) {
@@ -307,6 +320,16 @@ function deriveProposedValue(node, constantValue) {
       return { supported: false, reason: 'Scalar boolean cannot safely replace a multi-value boolean[] test output.' };
     }
     return { supported: true, proposedValue: [constantValue] };
+  }
+
+  if (node.type === 'bool[][]' || node.type === 'boolean[][]' || node.type === 'Checkbox[][]') {
+    if (!isBooleanMatrix(node.value)) {
+      return { supported: false, skip: true, reason: 'Current test value is null or not a supported boolean matrix.' };
+    }
+    if (typeof constantValue !== 'boolean') {
+      return { supported: false, reason: 'Constant value is not a supported boolean.' };
+    }
+    return { supported: true, proposedValue: fillMatrixShape(node.value, constantValue) };
   }
 
   if (node.type === 'decimal') {
@@ -363,6 +386,17 @@ function deriveProposedValue(node, constantValue) {
       return { supported: false, reason: 'Constant value is not a supported integer.' };
     }
     return { supported: true, proposedValue: [parsed] };
+  }
+
+  if (node.type === 'int[][]' || node.type === 'integer[][]') {
+    if (!isNumericMatrix(node.value)) {
+      return { supported: false, skip: true, reason: 'Current test value is null or not a supported integer matrix.' };
+    }
+    const parsed = Number.parseInt(constantValue, 10);
+    if (!Number.isFinite(parsed)) {
+      return { supported: false, reason: 'Constant value is not a supported integer.' };
+    }
+    return { supported: true, proposedValue: fillMatrixShape(node.value, parsed) };
   }
 
   if (node.type === 'string') {
@@ -469,48 +503,62 @@ function valuesEqual(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function shiftIsoDateByYears(value, deltaYears) {
+function parseIsoDateParts(value) {
   if (typeof value !== 'string') {
-    return '';
+    return null;
   }
   const trimmed = value.trim();
-  const match = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!match) {
+  const match = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})(.*)$/);
+  if (!match || (match[4] && !match[4].startsWith('T'))) {
+    return null;
+  }
+  const datePart = `${match[1]}-${match[2]}-${match[3]}`;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  if (date.toISOString().slice(0, 10) !== datePart) {
+    return null;
+  }
+  return {
+    date,
+    suffix: match[4] || ''
+  };
+}
+
+function appendIsoDateSuffix(dateValue, suffixSource) {
+  const parts = parseIsoDateParts(suffixSource);
+  return parts?.suffix ? `${dateValue}${parts.suffix}` : dateValue;
+}
+
+function shiftIsoDateByYears(value, deltaYears) {
+  const parts = parseIsoDateParts(value);
+  if (!parts) {
     return '';
   }
-  const year = Number(match[1]) + deltaYears;
-  const monthIndex = Number(match[2]) - 1;
-  const day = Number(match[3]);
+  const year = parts.date.getUTCFullYear() + deltaYears;
+  const monthIndex = parts.date.getUTCMonth();
+  const day = parts.date.getUTCDate();
   const shifted = new Date(Date.UTC(year, monthIndex, day));
+  let shiftedDate;
   if (shifted.getUTCFullYear() !== year || shifted.getUTCMonth() !== monthIndex || shifted.getUTCDate() !== day) {
     const safe = new Date(Date.UTC(year, monthIndex + 1, 0));
-    return safe.toISOString().slice(0, 10);
+    shiftedDate = safe.toISOString().slice(0, 10);
+  } else {
+    shiftedDate = shifted.toISOString().slice(0, 10);
   }
-  return shifted.toISOString().slice(0, 10);
+  return `${shiftedDate}${parts.suffix}`;
 }
 
 function parseIsoDate(value) {
-  if (typeof value !== 'string') {
-    return null;
-  }
-  const match = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!match) {
-    return null;
-  }
-  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
-  if (date.toISOString().slice(0, 10) !== value.trim()) {
-    return null;
-  }
-  return date;
+  return parseIsoDateParts(value)?.date || null;
 }
 
 function addDays(value, days) {
-  const date = parseIsoDate(value);
-  if (!date) {
+  const parts = parseIsoDateParts(value);
+  if (!parts) {
     return '';
   }
+  const date = new Date(parts.date.getTime());
   date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
+  return `${date.toISOString().slice(0, 10)}${parts.suffix}`;
 }
 
 function daysBetween(startValue, endValue) {
@@ -536,6 +584,34 @@ function ageAsOf(birthValue, asOfValue) {
   return age;
 }
 
+function addMonthsUtc(date, months) {
+  const targetYear = date.getUTCFullYear();
+  const targetMonth = date.getUTCMonth() + months;
+  const day = date.getUTCDate();
+  const shifted = new Date(Date.UTC(targetYear, targetMonth, day));
+  if (shifted.getUTCDate() !== day) {
+    return new Date(Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), 0));
+  }
+  return shifted;
+}
+
+function ageIsAsOf(birthValue, ageLimitValue, asOfValue) {
+  const birthDate = parseIsoDate(birthValue);
+  const asOfDate = parseIsoDate(asOfValue);
+  const ageLimit = Number(ageLimitValue);
+  if (!birthDate || !asOfDate || !Number.isFinite(ageLimit)) {
+    return null;
+  }
+  const wholeYears = Math.trunc(ageLimit);
+  const extraMonths = Math.round((ageLimit - wholeYears) * 12);
+  const threshold = addMonthsUtc(new Date(Date.UTC(
+    birthDate.getUTCFullYear() + wholeYears,
+    birthDate.getUTCMonth(),
+    birthDate.getUTCDate()
+  )), extraMonths);
+  return asOfDate.getTime() >= threshold.getTime();
+}
+
 function deriveInputBoundaryProposedValue(inputNode, constantValue, options = {}) {
   const allowOffset = options.allowOffset === true;
 
@@ -552,10 +628,10 @@ function deriveInputBoundaryProposedValue(inputNode, constantValue, options = {}
     }
 
     if (!allowOffset) {
-      if (currentValue !== priorYearValue) {
+      if (daysBetween(priorYearValue, currentValue) !== 0) {
         return { supported: false, skip: true, reason: 'Input does not match the prior-year boundary value.' };
       }
-      return { supported: true, proposedValue: constantValue };
+      return { supported: true, proposedValue: appendIsoDateSuffix(constantValue, currentValue) };
     }
 
     const offsetDays = daysBetween(priorYearValue, currentValue);
@@ -581,7 +657,7 @@ function deriveInputBoundaryProposedValue(inputNode, constantValue, options = {}
     if (Math.abs(offsetDays) > 370) {
       return { supported: false, skip: true, reason: 'Input date is too far from the maintained constant boundary.' };
     }
-    const proposedValue = addDays(constantValue, offsetDays);
+    const proposedValue = appendIsoDateSuffix(addDays(constantValue, offsetDays), currentValue);
     if (!proposedValue) {
       return { supported: false, reason: 'Could not preserve the date offset from the maintained constant.' };
     }
@@ -674,34 +750,6 @@ function deriveInputYearShiftProposedValue(inputNode, constantValues) {
   }
 
   return { supported: false, skip: true, reason: `Unsupported input type for year-cycle update: ${inputNode?.type || 'unknown'}` };
-}
-
-function isDateTimeTestType(type) {
-  return typeof type === 'string' && /^DateTime(\[\])*$/i.test(type.trim());
-}
-
-function shiftDateTimeValueShape(value, deltaYears = 1) {
-  if (Array.isArray(value)) {
-    const shiftedItems = value.map(item => shiftDateTimeValueShape(item, deltaYears));
-    if (shiftedItems.some(item => item === undefined)) {
-      return undefined;
-    }
-    return shiftedItems;
-  }
-
-  const shifted = shiftIsoDateByYears(value, deltaYears);
-  return shifted || undefined;
-}
-
-function deriveAggressiveDateTimeInputProposedValue(inputNode) {
-  if (!isDateTimeTestType(inputNode?.type)) {
-    return { supported: false, skip: true, reason: `Unsupported input type for aggressive date update: ${inputNode?.type || 'unknown'}` };
-  }
-  const proposedValue = shiftDateTimeValueShape(inputNode.value, 1);
-  if (proposedValue === undefined) {
-    return { supported: false, skip: true, reason: 'Current input value is not a supported YYYY-MM-DD date shape.' };
-  }
-  return { supported: true, proposedValue };
 }
 
 function deriveInputCalendarYearShiftProposedValue(inputNode, currentYearValue, options = {}) {
@@ -941,6 +989,33 @@ function evaluateExpression(expression, context) {
       ok: true,
       value: values.length === 1 ? values[0] : values,
       maintainedNames: [...(birth.maintainedNames || []), ...(asOf.maintainedNames || [])]
+    };
+  }
+
+  match = expr.match(/^(\{\d+\})\.AgeIs\((.+)\)\.AsOf\((\{\d+\})\)$/);
+  if (match) {
+    const birth = evaluateExpression(match[1], context);
+    const ageLimit = evaluateExpression(match[2], context);
+    const asOf = evaluateExpression(match[3], context);
+    if (!birth.ok || !ageLimit.ok || !asOf.ok) return { ok: false };
+    const births = Array.isArray(birth.value) ? birth.value : [birth.value];
+    const asOfs = Array.isArray(asOf.value) ? asOf.value : [asOf.value];
+    const length = Math.max(births.length, asOfs.length);
+    if (![1, length].includes(births.length) || ![1, length].includes(asOfs.length)) return { ok: false };
+    const values = [];
+    for (let index = 0; index < length; index++) {
+      const isAge = ageIsAsOf(
+        births[births.length === 1 ? 0 : index],
+        ageLimit.value,
+        asOfs[asOfs.length === 1 ? 0 : index]
+      );
+      if (isAge === null) return { ok: false };
+      values.push(isAge);
+    }
+    return {
+      ok: true,
+      value: values.length === 1 ? values[0] : values,
+      maintainedNames: [...(birth.maintainedNames || []), ...(ageLimit.maintainedNames || []), ...(asOf.maintainedNames || [])]
     };
   }
 
@@ -1475,13 +1550,12 @@ function testCaseExpectsBlankOutput(testCase) {
   return Boolean(testCase?.expectsBlank) || testCase?.output?.value === null || testCase?.output?.value === undefined;
 }
 
-function buildPreviewRows({ calcJson, testJson, calcFilePath, testFilePath, constantsByName, allConstantsByName = constantsByName, includeAggressiveDateTimeInputs = false }) {
+function buildPreviewRows({ calcJson, testJson, calcFilePath, testFilePath, constantsByName, allConstantsByName = constantsByName }) {
   const rows = [];
   const outputType = calcJson?.Type || '';
   const outputTomType = calcJson?.TomType || '';
   const calcFieldPath = getCalcFieldPath(calcJson);
   const constantDependencies = getConstantDependencies(calcJson, constantsByName);
-  const calcUsesMaintainedConstant = constantDependencies.length > 0;
   const inputRelationships = getInputConstantDateRelationships(calcJson, constantsByName);
   const inputsWithDaysBetweenRelationship = new Set(inputRelationships
     .filter(relationship => relationship.source === 'daysBetween')
@@ -1661,44 +1735,6 @@ function buildPreviewRows({ calcJson, testJson, calcFilePath, testFilePath, cons
     return Array.from(candidatesByPath.values()).filter(candidate => candidate.canApply);
   }
 
-  function addAggressiveDateTimeInputRows(testCase, casePathParts, caseName, existingInputRows) {
-    if (!includeAggressiveDateTimeInputs || !calcUsesMaintainedConstant) {
-      return [];
-    }
-
-    const existingValuePaths = new Set(existingInputRows.map(row => row.valuePath));
-    const inputs = Array.isArray(testCase?.inputs) ? testCase.inputs : [];
-    const aggressiveRows = [];
-    inputs.forEach((input, index) => {
-      const valuePath = [...casePathParts, 'inputs', index, 'value'].join('.');
-      if (existingValuePaths.has(valuePath) || !isDateTimeTestType(input?.type)) {
-        return;
-      }
-      const derived = deriveAggressiveDateTimeInputProposedValue(input);
-      if (!derived.supported || valuesEqual(input.value, derived.proposedValue)) {
-        return;
-      }
-      aggressiveRows.push({
-        rowKind: 'aggressiveInput',
-        filePath: testFilePath,
-        calcFilePath,
-        calcFieldPath,
-        caseName,
-        fieldPath: [...casePathParts, 'inputs', index].join('.'),
-        valuePath,
-        type: input.type || '',
-        tomType: input.tomType || '',
-        constantName: 'Experimental DateTime +1 year',
-        currentValue: cloneValue(input.value),
-        proposedValue: cloneValue(derived.proposedValue),
-        canApply: true,
-        reason: ''
-      });
-    });
-    rows.push(...aggressiveRows);
-    return aggressiveRows;
-  }
-
   function buildOutputEvaluationTestCase(testCase, casePathParts, inputRows) {
     const applicableRows = inputRows.filter(row => row?.canApply && row?.valuePath);
     if (!applicableRows.length) {
@@ -1794,8 +1830,7 @@ function buildPreviewRows({ calcJson, testJson, calcFilePath, testFilePath, cons
         : null;
       const casePathParts = [index];
       const inputRows = addInputComparisonRows(testCase, casePathParts, currentCaseName);
-      const aggressiveInputRows = addAggressiveDateTimeInputRows(testCase, casePathParts, currentCaseName, inputRows);
-      const outputEvaluationTestCase = buildOutputEvaluationTestCase(testCase, casePathParts, [...inputRows, ...aggressiveInputRows]);
+      const outputEvaluationTestCase = buildOutputEvaluationTestCase(testCase, casePathParts, inputRows);
       const selectedConstant = resolveReturnConstant(calcJson, constantsByName, outputEvaluationTestCase, allConstantsByName);
       visit(testCase, [index], null, testCase, selectedConstant);
     });
@@ -1804,8 +1839,7 @@ function buildPreviewRows({ calcJson, testJson, calcFilePath, testFilePath, cons
       ? testJson.name
       : null;
     const inputRows = addInputComparisonRows(testJson, [], currentCaseName);
-    const aggressiveInputRows = addAggressiveDateTimeInputRows(testJson, [], currentCaseName, inputRows);
-    const outputEvaluationTestCase = buildOutputEvaluationTestCase(testJson, [], [...inputRows, ...aggressiveInputRows]);
+    const outputEvaluationTestCase = buildOutputEvaluationTestCase(testJson, [], inputRows);
     const selectedConstant = resolveReturnConstant(calcJson, constantsByName, outputEvaluationTestCase, allConstantsByName);
     visit(testJson, [], null, testJson, selectedConstant);
   }

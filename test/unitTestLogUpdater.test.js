@@ -264,5 +264,131 @@ test('Unit test log updater: does not auto-apply null actuals into decimal outpu
   const preview = await buildLogUpdatePreview({ rootPath: tempRoot, stateCode: 'FD', logPath, regulatoryYear: 2025 });
   assert.equal(preview.updateCount, 0);
   assert.equal(preview.reviewCount, 1);
+  assert.equal(preview.rows[0].valuePath, '0.output.value');
+  assert.equal(preview.rows[0].calcFieldPath, 'FD/Form2210.PenaltyWorksheet/AmountQ1R4');
+  assert.equal(preview.rows[0].type, 'decimal');
   assert.match(preview.rows[0].reason, /null/);
+
+  await applyLogUpdateRows([{ ...preview.rows[0], canApply: true, proposedValue: 0 }]);
+  const updatedRaw = fs.readFileSync(testPath, 'utf-8');
+  assert.match(updatedRaw, /"value": 0\.0/);
+});
+
+test('Unit test log updater: infers null actuals from sibling null output cases', async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'unit-test-log-updater-null-sibling-'));
+  const testDir = path.join(tempRoot, 'Form1040ES.EstTaxPaymentRecord');
+  fs.mkdirSync(testDir, { recursive: true });
+  const testPath = path.join(testDir, 'Q4FirstPaymentDt.test.json');
+  fs.writeFileSync(testPath, JSON.stringify([
+    {
+      name: 'DateBeforeQ4Start',
+      output: {
+        entity: 'FD',
+        form: 'Form1040ES.EstTaxPaymentRecord',
+        field: 'Q4FirstPaymentDt',
+        type: 'DateTime',
+        tomType: 'Date',
+        value: null
+      }
+    },
+    {
+      name: 'DateAtStartOfQ4',
+      output: {
+        entity: 'FD',
+        form: 'Form1040ES.EstTaxPaymentRecord',
+        field: 'Q4FirstPaymentDt',
+        type: 'DateTime',
+        tomType: 'Date',
+        value: '2026-01-15'
+      }
+    }
+  ], null, 2));
+  const logPath = path.join(tempRoot, 'log.txt');
+  fs.writeFileSync(logPath, [
+    'Preparing unit tests execution for FD...',
+    'Starting test execution',
+    'Failed FD_Form1040ES_EstTaxPaymentRecord_Q4FirstPaymentDt_DateAtStartOfQ4 [< 1 ms]',
+    'Assert.AreEqual failed. Expected:<2026-01-15>. Actual:<(null)>. DateAtStartOfQ4',
+    'Failed!  - Failed:     1, Passed: 0 - HRBlock.Oce.CalcEngine.FD.Tests.Unit.dll (net8.0)'
+  ].join('\n'));
+
+  const preview = await buildLogUpdatePreview({ rootPath: tempRoot, stateCode: 'FD', logPath, regulatoryYear: 2025 });
+  assert.equal(preview.updateCount, 1);
+  assert.equal(preview.reviewCount, 0);
+  assert.equal(preview.rows[0].valuePath, '1.output.value');
+  assert.equal(preview.rows[0].proposedValue, null);
+  assert.match(preview.rows[0].reason, /nullable test context/);
+
+  await applyLogUpdateRows(preview.rows);
+  const updated = JSON.parse(fs.readFileSync(testPath, 'utf-8'));
+  assert.equal(updated[1].output.value, null);
+});
+
+test('Unit test log updater: infers null amount outputs from same-case nullable amount inputs', async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'unit-test-log-updater-null-input-'));
+  const testDir = path.join(tempRoot, 'Form2210.PenaltyWorksheet');
+  fs.mkdirSync(testDir, { recursive: true });
+  const testPath = path.join(testDir, 'AmountQ1R4.test.json');
+  fs.writeFileSync(testPath, JSON.stringify([
+    {
+      name: 'D4086749',
+      inputs: [
+        {
+          entity: 'FD',
+          form: 'Form2210.PenaltyWorksheet',
+          field: 'BeginningBalanceQ1R4',
+          type: 'decimal',
+          tomType: 'USAmount',
+          value: 450.0,
+          multi: false
+        },
+        {
+          entity: 'FD',
+          form: 'Form2210.PenaltyWorksheet',
+          field: 'P4Q1Payment',
+          type: 'decimal',
+          tomType: 'USAmount',
+          value: null,
+          multi: false
+        },
+        {
+          entity: 'FD',
+          form: 'Form2210.PenaltyWorksheet',
+          field: 'Q1Line4Description',
+          type: 'string',
+          tomType: 'String',
+          value: 'BALANCE DUE',
+          multi: false
+        }
+      ],
+      output: {
+        entity: 'FD',
+        form: 'Form2210.PenaltyWorksheet',
+        field: 'AmountQ1R4',
+        type: 'decimal',
+        tomType: 'USAmount',
+        value: 450.0,
+        multi: false
+      }
+    }
+  ], null, 2));
+  const logPath = path.join(tempRoot, 'log.txt');
+  fs.writeFileSync(logPath, [
+    'Preparing unit tests execution for FD...',
+    'Starting test execution',
+    'Failed FD_Form2210_PenaltyWorksheet_AmountQ1R4_D4086749 [< 1 ms]',
+    'Assert.AreEqual failed. Expected:<450.0>. Actual:<(null)>. D4086749',
+    'Failed!  - Failed:     1, Passed: 0 - HRBlock.Oce.CalcEngine.FD.Tests.Unit.dll (net8.0)'
+  ].join('\n'));
+
+  const preview = await buildLogUpdatePreview({ rootPath: tempRoot, stateCode: 'FD', logPath, regulatoryYear: 2025 });
+  assert.equal(preview.updateCount, 1);
+  assert.equal(preview.reviewCount, 0);
+  assert.equal(preview.rows[0].valuePath, '0.output.value');
+  assert.equal(preview.rows[0].proposedValue, null);
+  assert.match(preview.rows[0].reason, /nullable test context/);
+
+  await applyLogUpdateRows(preview.rows);
+  const updated = JSON.parse(fs.readFileSync(testPath, 'utf-8'));
+  assert.equal(updated[0].output.value, null);
 });

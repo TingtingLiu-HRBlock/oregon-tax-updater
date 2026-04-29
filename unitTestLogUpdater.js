@@ -183,6 +183,40 @@ function flattenScalarPaths(value, pathParts = []) {
   return value.flatMap((item, index) => flattenScalarPaths(item, [...pathParts, index]));
 }
 
+function getTestCases(testJson) {
+  return Array.isArray(testJson) ? testJson : [testJson];
+}
+
+function outputsDescribeSameCalc(left, right) {
+  return Boolean(left && right)
+    && String(left.entity || '') === String(right.entity || '')
+    && String(left.form || '') === String(right.form || '')
+    && String(left.field || '') === String(right.field || '')
+    && String(left.type || '') === String(right.type || '')
+    && String(left.tomType || '') === String(right.tomType || '');
+}
+
+function hasSiblingNullOutput(testJson, currentTestCase, output) {
+  return getTestCases(testJson).some(testCase => {
+    if (!testCase || testCase === currentTestCase) {
+      return false;
+    }
+    const candidateOutput = testCase.output;
+    return candidateOutput?.value === null && outputsDescribeSameCalc(candidateOutput, output);
+  });
+}
+
+function hasSameCaseNullableInput(currentTestCase, output) {
+  const inputs = Array.isArray(currentTestCase?.inputs) ? currentTestCase.inputs : [];
+  return inputs.some(input => {
+    return input?.value === null
+      && String(input.entity || '') === String(output?.entity || '')
+      && String(input.form || '') === String(output?.form || '')
+      && String(input.type || '') === String(output?.type || '')
+      && String(input.tomType || '') === String(output?.tomType || '');
+  });
+}
+
 function setValueAtPath(root, valuePath, nextValue) {
   const parts = valuePath.split('.');
   let current = root;
@@ -210,8 +244,49 @@ function buildFailureRow(failure, filePath, testJson) {
   }
 
   const basePath = [...match.pathParts, 'output', 'value'].join('.');
+  const fieldPath = [...match.pathParts, 'output'].join('.') || 'output';
+  const calcFieldPath = `${output.entity || ''}/${output.form || ''}/${output.field || ''}`;
+  const buildManualOutputRow = (reason, options = {}) => ({
+    ...failure,
+    filePath,
+    calcFieldPath,
+    caseName,
+    fieldPath,
+    valuePath: options.valuePath || basePath,
+    type: output.type || '',
+    tomType: output.tomType || '',
+    constantName: 'Runtime actual from unit test log',
+    currentValue: options.currentValue !== undefined ? options.currentValue : output.value,
+    proposedValue: '',
+    canApply: false,
+    reason
+  });
   if (isNullOnlyLogValue(failure.actualRaw)) {
-    return { ...failure, filePath, caseName, fieldPath: [...match.pathParts, 'output'].join('.') || 'output', currentValue: output.value, proposedValue: '', canApply: false, reason: 'Log actual value is null; skipping automatic update to avoid invalid generated tests.' };
+    const canInferNull = !Array.isArray(output.value)
+      && (hasSiblingNullOutput(testJson, match.testCase, output) || hasSameCaseNullableInput(match.testCase, output));
+    if (canInferNull) {
+      const expectedValue = convertLogValue(failure.expectedRaw, output.value);
+      if (valuesEqual(output.value, expectedValue)) {
+        return {
+          ...failure,
+          rowKind: 'logOutput',
+          filePath,
+          calcFieldPath,
+          caseName,
+          fieldPath,
+          valuePath: basePath,
+          type: output.type || '',
+          tomType: output.tomType || '',
+          constantName: 'Runtime actual from unit test log',
+          currentValue: output.value,
+          proposedValue: null,
+          canApply: true,
+          reason: 'Null output inferred from nullable test context.'
+        };
+      }
+      return buildManualOutputRow('Current output no longer matches the log expected value.');
+    }
+    return buildManualOutputRow('Log actual value is null; skipping automatic update to avoid invalid generated tests.');
   }
 
   if (Array.isArray(output.value)) {
@@ -223,15 +298,15 @@ function buildFailureRow(failure, filePath, testJson) {
       : null;
     if (expectedArray && proposedArray) {
       if (!valuesEqual(output.value, expectedArray)) {
-        return { ...failure, filePath, caseName, fieldPath: [...match.pathParts, 'output'].join('.') || 'output', currentValue: output.value, proposedValue: '', canApply: false, reason: 'Current output no longer matches the log expected value.' };
+        return buildManualOutputRow('Current output no longer matches the log expected value.');
       }
       return {
         ...failure,
         rowKind: 'logOutput',
         filePath,
-        calcFieldPath: `${output.entity || ''}/${output.form || ''}/${output.field || ''}`,
+        calcFieldPath,
         caseName,
-        fieldPath: [...match.pathParts, 'output'].join('.') || 'output',
+        fieldPath,
         valuePath: basePath,
         type: output.type || '',
         tomType: output.tomType || '',
@@ -248,15 +323,15 @@ function buildFailureRow(failure, filePath, testJson) {
       const currentElement = scalarPaths[0].value;
       const expectedValue = convertLogValue(failure.expectedRaw, currentElement);
       if (!valuesEqual(currentElement, expectedValue)) {
-        return { ...failure, filePath, caseName, fieldPath: [...match.pathParts, 'output'].join('.') || 'output', currentValue: output.value, proposedValue: '', canApply: false, reason: 'Current output no longer matches the log expected value.' };
+        return buildManualOutputRow('Current output no longer matches the log expected value.');
       }
       return {
         ...failure,
         rowKind: 'logOutput',
         filePath,
-        calcFieldPath: `${output.entity || ''}/${output.form || ''}/${output.field || ''}`,
+        calcFieldPath,
         caseName,
-        fieldPath: [...match.pathParts, 'output'].join('.') || 'output',
+        fieldPath,
         valuePath: basePath,
         type: output.type || '',
         tomType: output.tomType || '',
@@ -272,24 +347,27 @@ function buildFailureRow(failure, filePath, testJson) {
       ? scalarPaths[failure.elementIndex]
       : scalarPaths.length === 1 ? scalarPaths[0] : null;
     if (!scalarMatch) {
-      return { ...failure, filePath, caseName, fieldPath: [...match.pathParts, 'output'].join('.') || 'output', canApply: false, reason: 'Could not safely choose an output array element.' };
+      return buildManualOutputRow('Could not safely choose an output array element.');
     }
     const currentElement = scalarMatch.value;
     const expectedValue = convertLogValue(failure.expectedRaw, currentElement);
     const proposedElement = convertLogValue(failure.actualRaw, currentElement);
     if (typeof proposedElement === 'symbol') {
-      return { ...failure, filePath, caseName, fieldPath: [...match.pathParts, 'output'].join('.') || 'output', currentValue: output.value, proposedValue: '', canApply: false, reason: 'Log actual value only says the output is not blank.' };
+      return buildManualOutputRow('Log actual value only says the output is not blank.');
     }
     if (!valuesEqual(currentElement, expectedValue)) {
-      return { ...failure, filePath, caseName, fieldPath: [...match.pathParts, 'output'].join('.') || 'output', currentValue: output.value, proposedValue: '', canApply: false, reason: 'Current output no longer matches the log expected value.' };
+      return buildManualOutputRow('Current output no longer matches the log expected value.', {
+        valuePath: [basePath, ...scalarMatch.pathParts].join('.'),
+        currentValue: currentElement
+      });
     }
     return {
       ...failure,
       rowKind: 'logOutput',
       filePath,
-      calcFieldPath: `${output.entity || ''}/${output.form || ''}/${output.field || ''}`,
+      calcFieldPath,
       caseName,
-      fieldPath: [...match.pathParts, 'output'].join('.') || 'output',
+      fieldPath,
       valuePath: [basePath, ...scalarMatch.pathParts].join('.'),
       type: output.type || '',
       tomType: output.tomType || '',
@@ -304,18 +382,18 @@ function buildFailureRow(failure, filePath, testJson) {
   const expectedValue = convertLogValue(failure.expectedRaw, output.value);
   const proposedValue = convertLogValue(failure.actualRaw, output.value);
   if (typeof proposedValue === 'symbol') {
-    return { ...failure, filePath, caseName, fieldPath: [...match.pathParts, 'output'].join('.') || 'output', currentValue: output.value, proposedValue: '', canApply: false, reason: 'Log actual value only says the output is not blank.' };
+    return buildManualOutputRow('Log actual value only says the output is not blank.');
   }
   if (!valuesEqual(output.value, expectedValue)) {
-    return { ...failure, filePath, caseName, fieldPath: [...match.pathParts, 'output'].join('.') || 'output', currentValue: output.value, proposedValue: '', canApply: false, reason: 'Current output no longer matches the log expected value.' };
+    return buildManualOutputRow('Current output no longer matches the log expected value.');
   }
   return {
     ...failure,
     rowKind: 'logOutput',
     filePath,
-    calcFieldPath: `${output.entity || ''}/${output.form || ''}/${output.field || ''}`,
+    calcFieldPath,
     caseName,
-    fieldPath: [...match.pathParts, 'output'].join('.') || 'output',
+    fieldPath,
     valuePath: basePath,
     type: output.type || '',
     tomType: output.tomType || '',

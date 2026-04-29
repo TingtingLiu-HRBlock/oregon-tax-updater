@@ -23,6 +23,7 @@ const {
   suggestYearOverYearValue,
   buildConstantsMaintenanceReview,
   buildUnitTestDateRollerReview,
+  buildUnitTestLogReview,
   normalizeDeterministicRowsToData,
   getEffectivePdfPageRange,
   renderWorkflowText,
@@ -53,7 +54,7 @@ function resetAppState() {
   appState.constantsShiftDeltaYears = 1;
   appState.constantsMaintenanceUi = { activeTab: 'auto' };
   appState.unitTestDateRollerUi = { activeTab: 'ready' };
-  appState.unitTestDateRollerOptions = { includeAggressiveDateTimeInputs: false };
+  appState.unitTestLogUi = { activeTab: 'ready' };
 }
 
 function pdfTextItem(str, x, y = 500) {
@@ -793,7 +794,7 @@ test('Workflow text reset: switching from unit tests to constants updates the pr
   appState.selectedWorkflowKey = 'constants-maintenance';
   renderWorkflowText();
 
-  assert.equal(elements.extractBtn.textContent, 'Preview Year Shift');
+  assert.equal(elements.extractBtn.textContent, 'Preview Constant Year Shift');
   assert.equal(elements.updateJsonBtn.textContent, 'Apply Year Shift');
   assert.equal(elements.unitTestLogControls.style.display, 'none');
   assert.equal(elements.constantsShiftControls.style.display, 'flex');
@@ -893,26 +894,11 @@ test('Unit test date roller: review summary preserves calc, file, and ready-upda
   assert.equal(review.updateCount, 2);
   assert.equal(review.reviewCount, 1);
   assert.equal(review.readyRows.length, 2);
-  assert.equal(review.aggressiveRows.length, 0);
   assert.equal(review.manualRows.length, 1);
   assert.equal(review.caseCount, 3);
   assert.equal(review.rows[0].calcFieldPath, 'OH/FormA/FieldA');
   assert.equal(review.rows[1].caseName, 'case B');
   assert.deepEqual(review.rows[1].proposedValue, ['2026-06-15']);
-});
-
-test('Unit test date roller: review separates experimental DateTime input rows', () => {
-  resetAppState();
-  const review = buildUnitTestDateRollerReview({
-    rows: [
-      { rowKind: 'aggressiveInput', filePath: 'a.test.json', calcFilePath: 'a.calc.json', calcFieldPath: 'FD/FormA/FieldA', caseName: 'case A', fieldPath: '0.inputs.0', valuePath: '0.inputs.0.value', type: 'DateTime', tomType: 'Date', constantName: 'Experimental DateTime +1 year', currentValue: '2025-01-01', proposedValue: '2026-01-01', canApply: true },
-      { rowKind: 'output', filePath: 'b.test.json', calcFilePath: 'b.calc.json', calcFieldPath: 'FD/FormB/FieldB', caseName: 'case B', fieldPath: '0.output', valuePath: '0.output.value', type: 'DateTime', tomType: 'Date', constantName: 'SomeConstant', currentValue: '2025-04-15', proposedValue: '2026-04-15', canApply: true }
-    ]
-  });
-
-  assert.equal(review.aggressiveRows.length, 1);
-  assert.equal(review.readyRows.length, 1);
-  assert.equal(review.updateCount, 2);
 });
 
 test('Unit test date roller: review UI separates ready and manual rows into tabs', () => {
@@ -952,7 +938,10 @@ test('Unit test date roller: review UI separates ready and manual rows into tabs
   assert.match(container.innerHTML, /Calc Field Path/);
   assert.match(container.innerHTML, /OH\/FormA\/FieldA/);
   assert.doesNotMatch(container.innerHTML, /Test File/);
-  assert.doesNotMatch(container.innerHTML, /Calc File/);
+  assert.match(container.innerHTML, /Calc File: a\.calc\.json/);
+  assert.match(container.innerHTML, /View Calc \/ Unit Test/);
+  assert.match(container.innerHTML, /data-calc-file-path="a\.calc\.json"/);
+  assert.match(container.innerHTML, /data-test-file-path="a\.test\.json"/);
   assert.match(container.innerHTML, /Ready Unit Test Updates/);
   assert.match(container.innerHTML, /unit-test-panel-ready"><div class="content-section">/);
   assert.match(container.innerHTML, /unit-test-review-panel active" id="unit-test-panel-ready"/);
@@ -961,8 +950,61 @@ test('Unit test date roller: review UI separates ready and manual rows into tabs
   appState.unitTestDateRollerUi.activeTab = 'manual';
   renderMarriageCreditSection();
   assert.match(container.innerHTML, /Unit Tests Needing Manual Review/);
+  assert.match(container.innerHTML, /Reviewed Value/);
+  assert.match(container.innerHTML, /unit-test-manual-value-input/);
+  assert.match(container.innerHTML, /Calc File: c\.calc\.json/);
+  assert.match(container.innerHTML, /data-calc-file-path="c\.calc\.json"/);
+  assert.match(container.innerHTML, /data-test-file-path="c\.test\.json"/);
   assert.match(container.innerHTML, /unit-test-review-panel active" id="unit-test-panel-manual"/);
   assert.doesNotMatch(container.innerHTML, /unit-test-review-panel active" id="unit-test-panel-ready"/);
+});
+
+test('Unit test log review UI shows calc links and manual reviewed value inputs', () => {
+  resetAppState();
+  appState.selectedWorkflowKey = 'unit-test-date-roller';
+  appState.filePaths = {
+    TEST_ROOT: 'C:\\TaxEngine\\OCE-Regulatory-2025\\Tests\\OH',
+    CALC_ROOT: 'C:\\TaxEngine\\OCE-Regulatory-2025\\Source\\OH\\Calc'
+  };
+  appState.unitTestLogReview = buildUnitTestLogReview({
+    logPath: 'latest.log',
+    failureCount: 2,
+    rows: [
+      { filePath: 'C:\\TaxEngine\\OCE-Regulatory-2025\\Tests\\OH\\FormA\\FieldA.test.json', calcFieldPath: 'OH/FormA/FieldA', caseName: 'case A', fieldPath: '0.output', valuePath: '0.output.value', type: 'decimal', currentValue: 10, proposedValue: 12, canApply: true },
+      { filePath: 'C:\\TaxEngine\\OCE-Regulatory-2025\\Tests\\OH\\FormB\\FieldB.test.json', calcFieldPath: 'OH/FormB/FieldB', caseName: 'case B', fieldPath: '0.output', valuePath: '0.output.value', type: 'DateTime[]', currentValue: ['2026-05-15'], proposedValue: '', canApply: false, reason: 'Log actual value is null' }
+    ]
+  });
+
+  const container = {
+    style: {},
+    innerHTML: '',
+    querySelectorAll() {
+      return [];
+    }
+  };
+  global.document = {
+    getElementById(id) {
+      if (id === 'marriageCreditSection') return container;
+      return null;
+    }
+  };
+
+  renderMarriageCreditSection();
+  assert.match(container.innerHTML, /unit-test-log-review-tabs/);
+  assert.match(container.innerHTML, /data-unit-test-log-tab="ready"/);
+  assert.match(container.innerHTML, /data-unit-test-log-tab="manual"/);
+  assert.match(container.innerHTML, /unit-test-log-review-panel active" id="unit-test-log-panel-ready"/);
+  assert.match(container.innerHTML, /unit-test-log-panel-manual/);
+  assert.match(container.innerHTML, /View Calc \/ Unit Test/);
+  assert.match(container.innerHTML, /FieldA\.calc\.json/);
+  assert.match(container.innerHTML, /FieldB\.calc\.json/);
+  assert.match(container.innerHTML, /Reviewed Value/);
+  assert.match(container.innerHTML, /unit-test-log-manual-value-input/);
+
+  appState.unitTestLogUi.activeTab = 'manual';
+  renderMarriageCreditSection();
+  assert.match(container.innerHTML, /unit-test-log-review-panel active" id="unit-test-log-panel-manual"/);
+  assert.doesNotMatch(container.innerHTML, /unit-test-log-review-panel active" id="unit-test-log-panel-ready"/);
 });
 
 test('Review tab scenario: switching tabs keeps exactly one active tab and panel', () => {

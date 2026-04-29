@@ -23,6 +23,8 @@ contextBridge.exposeInMainWorld('api', {
   readConstantsMaintenanceFile: (filePath) => ipcRenderer.invoke('read-constants-maintenance-file', filePath),
   applyConstantsYearShift: (payload) => ipcRenderer.invoke('apply-constants-year-shift', payload),
   applyConstantsManualUpdates: (payload) => ipcRenderer.invoke('apply-constants-manual-updates', payload),
+  readUnitTestCalcFile: (payload) => ipcRenderer.invoke('read-unit-test-calc-file', payload),
+  readUnitTestReviewFiles: (payload) => ipcRenderer.invoke('read-unit-test-review-files', payload),
   previewUnitTestDateRoll: (payload) => ipcRenderer.invoke('preview-unit-test-date-roll', payload),
   applyUnitTestDateRoll: (payload) => ipcRenderer.invoke('apply-unit-test-date-roll', payload),
   previewUnitTestLogUpdates: (payload) => ipcRenderer.invoke('preview-unit-test-log-updates', payload),
