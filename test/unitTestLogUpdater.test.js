@@ -79,10 +79,19 @@ test('Unit test log updater: previews and applies output-only updates from log f
   assert.equal(preview.rows[0].valuePath, '0.output.value.0');
   assert.equal(preview.rows[0].currentValue, '20251231');
   assert.equal(preview.rows[0].proposedValue, '20261231');
+  assert.equal(preview.rows[0].inputCandidates.length, 1);
+  assert.equal(preview.rows[0].inputCandidates[0].valuePath, '0.inputs.0.value');
 
-  const result = await applyLogUpdateRows(preview.rows);
-  assert.equal(result.updatedValueCount, 1);
+  const result = await applyLogUpdateRows([{
+    ...preview.rows[0],
+    updates: [
+      { valuePath: preview.rows[0].valuePath, proposedValue: preview.rows[0].proposedValue },
+      { valuePath: preview.rows[0].inputCandidates[0].valuePath, proposedValue: ['Extension'] }
+    ]
+  }]);
+  assert.equal(result.updatedValueCount, 2);
   const updated = JSON.parse(fs.readFileSync(testPath, 'utf-8'));
+  assert.deepEqual(updated[0].inputs[0].value, ['Extension']);
   assert.deepEqual(updated[0].output.value, ['20261231']);
 });
 
@@ -272,6 +281,160 @@ test('Unit test log updater: does not auto-apply null actuals into decimal outpu
   await applyLogUpdateRows([{ ...preview.rows[0], canApply: true, proposedValue: 0 }]);
   const updatedRaw = fs.readFileSync(testPath, 'utf-8');
   assert.match(updatedRaw, /"value": 0\.0/);
+});
+
+test('Unit test log updater: manual review rows can carry same-case input edits', async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'unit-test-log-updater-input-review-'));
+  const testDir = path.join(tempRoot, 'Form760C.ComputeAdditiontoTax');
+  fs.mkdirSync(testDir, { recursive: true });
+  const testPath = path.join(testDir, 'NoOfDaysAftrInstlaColD.test.json');
+  fs.writeFileSync(testPath, JSON.stringify([
+    {
+      name: 'DateOfPaymentWithinQuarterOne',
+      inputs: [
+        {
+          entity: 'VA',
+          form: 'Form760C.PaymentInfo',
+          field: 'DateOfPayment',
+          type: 'DateTime',
+          tomType: 'Date',
+          value: '2025-04-15'
+        },
+        {
+          entity: 'VA',
+          form: 'Form760C.ComputeAdditiontoTax',
+          field: 'InstallmentAmount',
+          type: 'decimal',
+          tomType: 'USAmount',
+          value: 100.0
+        }
+      ],
+      output: {
+        entity: 'VA',
+        form: 'Form760C.ComputeAdditiontoTax',
+        field: 'NoOfDaysAftrInstlaColD',
+        type: 'decimal',
+        tomType: 'Number',
+        value: 106
+      }
+    }
+  ], null, 2));
+  const logPath = path.join(tempRoot, 'log.txt');
+  fs.writeFileSync(logPath, [
+    'Preparing unit tests execution for VA...',
+    'Starting test execution',
+    'Failed VA_Form760C_ComputeAdditiontoTax_NoOfDaysAftrInstlaColD_DateOfPaymentWithinQuarterOne [< 1 ms]',
+    'Assert.AreEqual failed. Expected:<106>. Actual:<(null)>. DateOfPaymentWithinQuarterOne',
+    'Failed!  - Failed:     1, Passed: 0 - HRBlock.Oce.CalcEngine.VA.Tests.Unit.dll (net8.0)'
+  ].join('\n'));
+
+  const preview = await buildLogUpdatePreview({ rootPath: tempRoot, stateCode: 'VA', logPath, regulatoryYear: 2025 });
+  assert.equal(preview.reviewCount, 1);
+  assert.equal(preview.rows[0].canApply, false);
+  assert.equal(preview.rows[0].inputCandidates.length, 2);
+  assert.equal(preview.rows[0].inputCandidates[0].label, 'Form760C.PaymentInfo/DateOfPayment');
+  assert.equal(preview.rows[0].inputCandidates[0].valuePath, '0.inputs.0.value');
+  assert.equal(preview.rows[0].inputCandidates[1].label, 'Form760C.ComputeAdditiontoTax/InstallmentAmount');
+  assert.equal(preview.rows[0].inputCandidates[1].valuePath, '0.inputs.1.value');
+
+  await applyLogUpdateRows([{
+    ...preview.rows[0],
+    canApply: true,
+    updates: [
+      { valuePath: preview.rows[0].inputCandidates[0].valuePath, proposedValue: '2026-04-15' },
+      { valuePath: preview.rows[0].inputCandidates[1].valuePath, proposedValue: 125.0 }
+    ]
+  }]);
+  const updated = JSON.parse(fs.readFileSync(testPath, 'utf-8'));
+  assert.equal(updated[0].inputs[0].value, '2026-04-15');
+  assert.equal(updated[0].inputs[1].value, 125.0);
+  assert.equal(updated[0].output.value, 106);
+});
+
+test('Unit test log updater: does not auto-apply blank actuals into custom enum outputs', async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'unit-test-log-updater-blank-enum-'));
+  const testDir = path.join(tempRoot, 'Form3853.HealthCoverageExemptions');
+  fs.mkdirSync(testDir, { recursive: true });
+  const testPath = path.join(testDir, 'ApplicableHouseholdMember.test.json');
+  fs.writeFileSync(testPath, JSON.stringify([
+    {
+      name: 'T1',
+      output: {
+        entity: 'CA',
+        form: 'Form3853.HealthCoverageExemptions',
+        field: 'ApplicableHouseholdMember',
+        type: 'ApplicableHouseholdMember[]',
+        tomType: 'ApplicableHouseholdMember',
+        value: ['PrimaryTaxpayer']
+      }
+    }
+  ], null, 2));
+  const logPath = path.join(tempRoot, 'log.txt');
+  fs.writeFileSync(logPath, [
+    'Preparing unit tests execution for CA...',
+    'Starting test execution',
+    'Failed CA_Form3853_HealthCoverageExemptions_ApplicableHouseholdMember_T1 [< 1 ms]',
+    'CollectionAssert.AreEqual failed. Expected:<PrimaryTaxpayer>. Actual:<Blank>. T1(Element at index 0 do not match.)',
+    'Failed!  - Failed:     1, Passed: 0 - HRBlock.Oce.CalcEngine.CA.Tests.Unit.dll (net8.0)'
+  ].join('\n'));
+
+  const preview = await buildLogUpdatePreview({ rootPath: tempRoot, stateCode: 'CA', logPath, regulatoryYear: 2025 });
+  assert.equal(preview.updateCount, 0);
+  assert.equal(preview.reviewCount, 1);
+  assert.equal(preview.rows[0].canApply, false);
+  assert.equal(preview.rows[0].valuePath, '0.output.value.0');
+  assert.match(preview.rows[0].reason, /non-string output type/);
+});
+
+test('Unit test log updater: infers blank custom enum output from sibling blank case', async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'unit-test-log-updater-blank-enum-sibling-'));
+  const testDir = path.join(tempRoot, 'Form3853.HealthCoverageExemptions.ApplicableHouseholdMember');
+  fs.mkdirSync(testDir, { recursive: true });
+  const testPath = path.join(testDir, 'Under18.April.test.json');
+  fs.writeFileSync(testPath, JSON.stringify([
+    {
+      name: 'HasMember',
+      output: {
+        entity: 'CA',
+        form: 'Form3853.HealthCoverageExemptions.ApplicableHouseholdMember',
+        field: 'Under18.April',
+        type: 'Checkbox[]',
+        tomType: 'Checkbox',
+        value: ['X']
+      }
+    },
+    {
+      name: 'NoMember',
+      output: {
+        entity: 'CA',
+        form: 'Form3853.HealthCoverageExemptions.ApplicableHouseholdMember',
+        field: 'Under18.April',
+        type: 'Checkbox[]',
+        tomType: 'Checkbox',
+        value: ['Blank']
+      }
+    }
+  ], null, 2));
+  const logPath = path.join(tempRoot, 'log.txt');
+  fs.writeFileSync(logPath, [
+    'Preparing unit tests execution for CA...',
+    'Starting test execution',
+    'Failed CA_Form3853_HealthCoverageExemptions_ApplicableHouseholdMember_Under18_April_HasMember [< 1 ms]',
+    'CollectionAssert.AreEqual failed. Expected:<X>. Actual:<Blank>. HasMember(Element at index 0 do not match.)',
+    'Failed!  - Failed:     1, Passed: 0 - HRBlock.Oce.CalcEngine.CA.Tests.Unit.dll (net8.0)'
+  ].join('\n'));
+
+  const preview = await buildLogUpdatePreview({ rootPath: tempRoot, stateCode: 'CA', logPath, regulatoryYear: 2025 });
+  assert.equal(preview.updateCount, 1);
+  assert.equal(preview.reviewCount, 0);
+  assert.equal(preview.rows[0].canApply, true);
+  assert.equal(preview.rows[0].valuePath, '0.output.value.0');
+  assert.equal(preview.rows[0].proposedValue, 'Blank');
+  assert.match(preview.rows[0].reason, /sibling test case/);
+
+  await applyLogUpdateRows(preview.rows);
+  const updated = JSON.parse(fs.readFileSync(testPath, 'utf-8'));
+  assert.deepEqual(updated[0].output.value, ['Blank']);
 });
 
 test('Unit test log updater: infers null actuals from sibling null output cases', async () => {

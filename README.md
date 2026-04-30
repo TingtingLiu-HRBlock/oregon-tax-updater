@@ -12,6 +12,7 @@ Desktop Electron app for extracting state tax table values from official instruc
 - Updates the selected JSON table files and the `Year` field.
 - Supports generic `Constants Maintenance` for all state and city codes that follow the shared TaxEngine constants-file pattern.
 - Supports generic `Unit Test Date Roller` for all state and city codes that follow the shared TaxEngine unit-test folder pattern.
+- Supports failed-output unit test updates from the latest Omnistudio unit-test log.
 - Supports a dedicated Minnesota `M1MA Marriage Credit` workflow with full-table preview and single-file replace.
 - Supports a dedicated Colorado `Family Affordability Tax Credit` workflow with dual-table preview and two-file replace.
 
@@ -34,6 +35,8 @@ Desktop Electron app for extracting state tax table values from official instruc
 - Special behavior:
   - No PDF is required for this workflow
   - Automatic date updates write both `Value` and `DataTimeValue`
+  - Automatic date rows can be reviewed and edited before apply
+  - Automatic and manual tabs have separate apply buttons, and applied automatic rows are removed from the current review
   - Manual review rows show the constant description, suggested value, and editable final value
 
 ### Generic Unit Test Date Roller
@@ -53,6 +56,9 @@ Desktop Electron app for extracting state tax table values from official instruc
     - `Ready for Update` for rows resolved safely from calc dependencies
     - `Needs Manual Review` for rows that were detected but cannot be updated safely
   - Shows calc field path, test case name, field path, constant name, current value, and proposed value
+  - Each tab has its own apply button so ready rows and manual rows can be written independently
+  - Ready rows expose editable reviewed values before apply
+  - Manual review rows can write only the values the user enters, including the flagged field and same-case input/output fields
 - Special behavior:
   - No PDF is required for this workflow
   - Does not apply a blanket `+1/-1` year shift
@@ -65,6 +71,28 @@ Desktop Electron app for extracting state tax table values from official instruc
   - Handles next-year spillover cases such as `LastDayOfTheYear + N days` while preserving the same relative position after rollover
   - Preserves decimal precision when rewriting test JSON, including boundary values such as `0.01`
   - Leaves unsupported calc shapes untouched instead of guessing
+  - `View Calc / Unit Test` opens the calc and matching unit test in a movable viewer window with search support
+
+### Failed Output Updates From Omnistudio Logs
+- Availability:
+  - Part of the `Unit Test Date Roller` workflow
+- Source:
+  - Latest Omnistudio unit-test log for the selected regulatory year
+- Match rule:
+  - Failed expected/actual assertions are mapped back to the matching unit test JSON file and test case
+  - The expected value must still match the current test JSON before the tool treats a row as ready
+- Review mode:
+  - Two review tabs before write:
+    - `Ready From Log` for rows where the runtime actual can be safely written
+    - `Needs Review From Log` for rows where the log result needs user inspection
+  - Each tab has its own apply button
+  - Ready rows allow the proposed output and same-case inputs to be edited before apply
+  - Manual rows allow the reviewed output and same-case inputs to be edited before apply
+- Special behavior:
+  - Writes only fields the user explicitly applies for that tab
+  - Supports multi-field updates in the same test case when input changes are needed along with an output change
+  - Skips unsafe null, blank, and unsupported enum-like values unless the tool can infer the value from sibling or same-case nullable context
+  - `View Calc / Unit Test` can be used from log review rows to inspect the calc and test JSON before applying
 
 ### Oregon
 - Filing statuses:
@@ -222,6 +250,7 @@ This generates a Windows NSIS installer in `dist/` named like `State-Tax-Table-U
 8. Review the `Auto Date Updates` tab for matching `Year Over Year` `DateTime` constants.
 9. Review the `Suggested Manual Updates` tab for other `Year Over Year` constants, using the description column to confirm or edit the proposed value.
 10. Click `Apply Year Shift` on the automatic tab or `Apply Manual Updates` on the manual tab.
+11. Applied automatic rows are removed from the current review so they are not applied a second time.
 
 ### Generic Unit Test Date Roller
 
@@ -232,9 +261,25 @@ This generates a Windows NSIS installer in `dist/` named like `State-Tax-Table-U
 5. Confirm the state unit-test root folder, calc root folder, and constants JSON path.
 6. Click `Preview Unit Test Updates`.
 7. Review the `Ready for Update` tab for calc-driven rows that can be written automatically.
-8. Review the `Needs Manual Review` tab for detected cases that require inspection.
-9. Confirm the calc field path and field path before applying broad updates.
-10. Click `Apply Unit Test Updates`.
+8. Edit any ready reviewed values that should differ from the proposed value.
+9. Review the `Needs Manual Review` tab for detected cases that require inspection.
+10. Enter reviewed values only for fields you want to write, including related inputs or outputs when needed.
+11. Use `View Calc / Unit Test` to inspect the calc and unit test in the searchable viewer.
+12. Click the apply button for the current tab.
+
+### Failed Output Updates From Log
+
+1. Start the app.
+2. Select the state or city code.
+3. Select the tax year.
+4. Choose workflow `Unit Test Date Roller`.
+5. Confirm the state unit-test root folder and calc root folder.
+6. Click `Preview Failed Output Updates`.
+7. Review `Ready From Log` for failures where the log actual can be applied.
+8. Edit the ready output or same-case inputs when the log difference suggests the tool missed an input dependency.
+9. Review `Needs Review From Log` for failures that were intentionally not auto-applied.
+10. Enter reviewed output or input values only for fields you want to write.
+11. Click the apply button for the current tab.
 
 ## PDF Workflow Notes
 
@@ -246,6 +291,7 @@ This generates a Windows NSIS installer in `dist/` named like `State-Tax-Table-U
 - For Colorado `Family Affordability Tax Credit`, review both extracted tables before replacing the JSON files.
 - For `Constants Maintenance`, review both the automatic date shifts and the suggested manual values before applying the update.
 - For `Unit Test Date Roller`, review the ready/manual tabs and apply only rows resolved from maintained-constant dependencies.
+- For failed-output log updates, review both ready and manual log tabs before applying because large output differences may indicate a related input needs to change too.
 
 ## Project Structure
 
@@ -254,6 +300,7 @@ This generates a Windows NSIS installer in `dist/` named like `State-Tax-Table-U
 - [preload.js](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/preload.js): safe renderer bridge
 - [renderer.js](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/renderer.js): UI, extraction flow, deterministic parsers, diff review, and workflow-specific full-table previews
 - [unitTestDateRoller.js](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/unitTestDateRoller.js): calc-aware preview/apply helpers for constant-driven unit test JSON updates
+- [unitTestLogUpdater.js](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/unitTestLogUpdater.js): Omnistudio failed-output log parsing and unit test JSON update helpers
 - [States/OR.js](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/States/OR.js): Oregon state config
 - [States/MN.js](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/States/MN.js): Minnesota state config
 - [States/CO.js](/c:/Users/A897115/projects/ORAgents/oregon-tax-updater/oregon-tax-updater/States/CO.js): Colorado state config
@@ -280,6 +327,7 @@ This generates a Windows NSIS installer in `dist/` named like `State-Tax-Table-U
 - For Colorado `Family Affordability Tax Credit`, verify both target paths resolve under `C:\TaxEngine\OCE-Regulatory-{regulatoryYear}\Source\CO\Utils\Tables\`.
 - For `Constants Maintenance`, verify the target path resolves under `C:\TaxEngine\OCE-Regulatory-{regulatoryYear}\Source\{STATE_CODE}\Utils\{STATE_CODE}.consts.json`.
 - For `Unit Test Date Roller`, verify the target path resolves under `C:\TaxEngine\OCE-Regulatory-{regulatoryYear}\Source\{STATE_CODE}\Tests\Unit\Calc`.
+- For failed-output log updates, verify Omnistudio has generated a current unit-test log for the selected regulatory year.
 
 ### App does not start
 - Run `npm install` again.

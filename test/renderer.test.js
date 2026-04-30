@@ -90,7 +90,7 @@ function createWorkflowTextDom(extra = {}) {
     extractBtn: { textContent: '', disabled: false },
     updateSectionTitle: { textContent: '' },
     updateSectionSubtitle: { textContent: '' },
-    updateJsonBtn: { textContent: '', disabled: false },
+    updateJsonBtn: { textContent: '', disabled: false, style: { display: '' } },
     constantsShiftControls: { style: { display: '' } },
     unitTestLogControls: { style: { display: '' } },
     constantsShiftHint: { textContent: '' },
@@ -633,6 +633,7 @@ test('Constants maintenance: review splits automatic DateTime rows from manual y
   }, 1);
 
   assert.equal(review.autoRows.length, 1);
+  assert.equal(review.autoRows[0].autoOverrideText, '2027-10-15');
   assert.equal(review.manualRows.length, 8);
   assert.equal(review.manualRows[0].suggestedValue, '2026');
   assert.equal(review.manualRows[0].description, 'Current tax year');
@@ -649,6 +650,50 @@ test('Constants maintenance: review splits automatic DateTime rows from manual y
   assert.equal(review.manualRows[6].needsManualReview, false);
   assert.equal(review.manualRows[7].suggestedValue, '26');
   assert.equal(review.manualRows[7].needsManualReview, false);
+});
+
+test('Constants maintenance: auto DateTime rows expose editable reviewed values', () => {
+  resetAppState();
+  appState.selectedWorkflowKey = 'constants-maintenance';
+  appState.constantsMaintenanceUi.activeTab = 'auto';
+  appState.constantsMaintenanceReview = buildConstantsMaintenanceReview({
+    taxYear: '2025',
+    entity: 'CA',
+    autoMatches: [
+      {
+        index: 1,
+        uid: 'auto',
+        name: 'StateExtendedDueDate',
+        description: 'State Extended Due Date',
+        value: '2026-10-15',
+        dataTimeValue: '2026-10-15T00:00:00.000Z'
+      }
+    ],
+    manualMatches: []
+  }, 1);
+
+  const container = {
+    style: {},
+    innerHTML: '',
+    querySelectorAll() {
+      return [];
+    }
+  };
+  global.document = {
+    getElementById(id) {
+      if (id === 'marriageCreditSection') return container;
+      return null;
+    }
+  };
+
+  renderMarriageCreditSection();
+
+  assert.match(container.innerHTML, /Auto Date Updates/);
+  assert.match(container.innerHTML, /Reviewed Value/);
+  assert.match(container.innerHTML, /constants-auto-input/);
+  assert.match(container.innerHTML, /value="2027-10-15"/);
+  assert.match(container.innerHTML, /placeholder="2027-10-15"/);
+  assert.match(container.innerHTML, /Ready/);
 });
 
 test('PDF page range scenario: manual range is required before extraction becomes available', () => {
@@ -884,7 +929,7 @@ test('Unit test date roller: review summary preserves calc, file, and ready-upda
     rows: [
       { rowKind: 'input', filePath: 'a.test.json', calcFilePath: 'a.calc.json', calcFieldPath: 'OH/FormA/FieldA', caseName: 'case A', fieldPath: '0.inputs.0', valuePath: '0.inputs.0.value', type: 'DateTime', tomType: 'Date', constantName: 'SomeConstant', currentValue: '2025-04-15', proposedValue: '2026-04-15', canApply: true },
       { rowKind: 'output', filePath: 'b.test.json', calcFilePath: 'b.calc.json', calcFieldPath: 'OH/FormB/FieldB', caseName: 'case B', fieldPath: '0.output', valuePath: '0.output.value.0', type: 'DateTime[]', tomType: 'Date', constantName: 'SomeConstant', currentValue: ['2025-06-15'], proposedValue: ['2026-06-15'], canApply: true },
-      { filePath: 'c.test.json', calcFilePath: 'c.calc.json', calcFieldPath: 'OH/FormC/FieldC', caseName: 'case C', fieldPath: '0.output', valuePath: '0.output.value', type: 'DateTime[]', tomType: 'Date', constantName: 'OtherConstant', currentValue: ['2025-09-15', '2025-12-15'], proposedValue: '', canApply: false, reason: 'Manual review' }
+      { filePath: 'c.test.json', calcFilePath: 'c.calc.json', calcFieldPath: 'OH/FormC/FieldC', caseName: 'case C', fieldPath: '0.output', valuePath: '0.output.value', type: 'DateTime[]', tomType: 'Date', constantName: 'OtherConstant', currentValue: ['2025-09-15', '2025-12-15'], proposedValue: '', canApply: false, reason: 'Manual review', inputCandidates: [{ label: 'PaymentDate', fieldPath: '0.inputs.0', valuePath: '0.inputs.0.value', type: 'DateTime', tomType: 'Date', currentValue: '2025-04-15' }] }
     ]
   });
 
@@ -897,8 +942,10 @@ test('Unit test date roller: review summary preserves calc, file, and ready-upda
   assert.equal(review.manualRows.length, 1);
   assert.equal(review.caseCount, 3);
   assert.equal(review.rows[0].calcFieldPath, 'OH/FormA/FieldA');
+  assert.equal(review.rows[0].readyOverrideText, '2026-04-15');
   assert.equal(review.rows[1].caseName, 'case B');
   assert.deepEqual(review.rows[1].proposedValue, ['2026-06-15']);
+  assert.equal(review.rows[1].readyOverrideText, '["2026-06-15"]');
 });
 
 test('Unit test date roller: review UI separates ready and manual rows into tabs', () => {
@@ -909,7 +956,7 @@ test('Unit test date roller: review UI separates ready and manual rows into tabs
     fileCount: 2,
     rows: [
       { rowKind: 'input', filePath: 'a.test.json', calcFilePath: 'a.calc.json', calcFieldPath: 'OH/FormA/FieldA', caseName: 'case A', fieldPath: '0.inputs.0', valuePath: '0.inputs.0.value', type: 'DateTime', tomType: 'Date', constantName: 'SomeConstant', currentValue: '2025-04-15', proposedValue: '2026-04-15', canApply: true },
-      { filePath: 'c.test.json', calcFilePath: 'c.calc.json', calcFieldPath: 'OH/FormC/FieldC', caseName: 'case C', fieldPath: '0.output', valuePath: '0.output.value', type: 'DateTime[]', tomType: 'Date', constantName: 'OtherConstant', currentValue: ['2025-09-15', '2025-12-15'], proposedValue: '', canApply: false, reason: 'Manual review' }
+      { filePath: 'c.test.json', calcFilePath: 'c.calc.json', calcFieldPath: 'OH/FormC/FieldC', caseName: 'case C', fieldPath: '0.output', valuePath: '0.output.value', type: 'DateTime[]', tomType: 'Date', constantName: 'OtherConstant', currentValue: ['2025-09-15', '2025-12-15'], proposedValue: '', canApply: false, reason: 'Manual review', inputCandidates: [{ label: 'PaymentDate', fieldPath: '0.inputs.0', valuePath: '0.inputs.0.value', type: 'DateTime', tomType: 'Date', currentValue: '2025-04-15' }] }
     ]
   });
 
@@ -943,6 +990,11 @@ test('Unit test date roller: review UI separates ready and manual rows into tabs
   assert.match(container.innerHTML, /data-calc-file-path="a\.calc\.json"/);
   assert.match(container.innerHTML, /data-test-file-path="a\.test\.json"/);
   assert.match(container.innerHTML, /Ready Unit Test Updates/);
+  assert.match(container.innerHTML, /Apply Ready Updates/);
+  assert.match(container.innerHTML, /Reviewed Value/);
+  assert.match(container.innerHTML, /unit-test-ready-value-input/);
+  assert.match(container.innerHTML, /value="2026-04-15"/);
+  assert.match(container.innerHTML, /placeholder="2026-04-15"/);
   assert.match(container.innerHTML, /unit-test-panel-ready"><div class="content-section">/);
   assert.match(container.innerHTML, /unit-test-review-panel active" id="unit-test-panel-ready"/);
   assert.doesNotMatch(container.innerHTML, /unit-test-review-panel active" id="unit-test-panel-manual"/);
@@ -950,8 +1002,11 @@ test('Unit test date roller: review UI separates ready and manual rows into tabs
   appState.unitTestDateRollerUi.activeTab = 'manual';
   renderMarriageCreditSection();
   assert.match(container.innerHTML, /Unit Tests Needing Manual Review/);
+  assert.match(container.innerHTML, /Apply Reviewed Manual Values/);
   assert.match(container.innerHTML, /Reviewed Value/);
   assert.match(container.innerHTML, /unit-test-manual-value-input/);
+  assert.match(container.innerHTML, /unit-test-manual-input-candidate/);
+  assert.match(container.innerHTML, /PaymentDate/);
   assert.match(container.innerHTML, /Calc File: c\.calc\.json/);
   assert.match(container.innerHTML, /data-calc-file-path="c\.calc\.json"/);
   assert.match(container.innerHTML, /data-test-file-path="c\.test\.json"/);
@@ -970,8 +1025,8 @@ test('Unit test log review UI shows calc links and manual reviewed value inputs'
     logPath: 'latest.log',
     failureCount: 2,
     rows: [
-      { filePath: 'C:\\TaxEngine\\OCE-Regulatory-2025\\Tests\\OH\\FormA\\FieldA.test.json', calcFieldPath: 'OH/FormA/FieldA', caseName: 'case A', fieldPath: '0.output', valuePath: '0.output.value', type: 'decimal', currentValue: 10, proposedValue: 12, canApply: true },
-      { filePath: 'C:\\TaxEngine\\OCE-Regulatory-2025\\Tests\\OH\\FormB\\FieldB.test.json', calcFieldPath: 'OH/FormB/FieldB', caseName: 'case B', fieldPath: '0.output', valuePath: '0.output.value', type: 'DateTime[]', currentValue: ['2026-05-15'], proposedValue: '', canApply: false, reason: 'Log actual value is null' }
+      { filePath: 'C:\\TaxEngine\\OCE-Regulatory-2025\\Tests\\OH\\FormA\\FieldA.test.json', calcFieldPath: 'OH/FormA/FieldA', caseName: 'case A', fieldPath: '0.output', valuePath: '0.output.value', type: 'decimal', currentValue: 10, proposedValue: 12, canApply: true, inputCandidates: [{ label: 'ReadyInputDate', fieldPath: '0.inputs.0', valuePath: '0.inputs.0.value', type: 'DateTime', tomType: 'Date', currentValue: '2025-01-15' }] },
+      { filePath: 'C:\\TaxEngine\\OCE-Regulatory-2025\\Tests\\OH\\FormB\\FieldB.test.json', calcFieldPath: 'OH/FormB/FieldB', caseName: 'case B', fieldPath: '0.output', valuePath: '0.output.value', type: 'DateTime[]', currentValue: ['2026-05-15'], proposedValue: '', canApply: false, reason: 'Log actual value is null', inputCandidates: [{ label: 'PaymentDate', fieldPath: '0.inputs.0', valuePath: '0.inputs.0.value', type: 'DateTime', tomType: 'Date', currentValue: '2025-04-15' }, { label: 'Amount', fieldPath: '0.inputs.1', valuePath: '0.inputs.1.value', type: 'decimal', tomType: 'USAmount', currentValue: 100 }] }
     ]
   });
 
@@ -995,11 +1050,20 @@ test('Unit test log review UI shows calc links and manual reviewed value inputs'
   assert.match(container.innerHTML, /data-unit-test-log-tab="manual"/);
   assert.match(container.innerHTML, /unit-test-log-review-panel active" id="unit-test-log-panel-ready"/);
   assert.match(container.innerHTML, /unit-test-log-panel-manual/);
+  assert.match(container.innerHTML, /Apply Ready Failed Outputs/);
+  assert.match(container.innerHTML, /Apply Reviewed Failed Outputs/);
+  assert.match(container.innerHTML, /Proposed \/ Reviewed/);
+  assert.match(container.innerHTML, /unit-test-log-ready-value-input/);
+  assert.match(container.innerHTML, /unit-test-log-ready-input-value/);
+  assert.match(container.innerHTML, /ReadyInputDate/);
   assert.match(container.innerHTML, /View Calc \/ Unit Test/);
   assert.match(container.innerHTML, /FieldA\.calc\.json/);
   assert.match(container.innerHTML, /FieldB\.calc\.json/);
   assert.match(container.innerHTML, /Reviewed Value/);
   assert.match(container.innerHTML, /unit-test-log-manual-value-input/);
+  assert.match(container.innerHTML, /unit-test-log-manual-input-value/);
+  assert.match(container.innerHTML, /PaymentDate/);
+  assert.match(container.innerHTML, /Amount/);
 
   appState.unitTestLogUi.activeTab = 'manual';
   renderMarriageCreditSection();

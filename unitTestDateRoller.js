@@ -149,8 +149,13 @@ function getInputConstantDateRelationships(calcJson, constantsByName) {
   const lines = Array.isArray(calcJson?.Custom)
     ? calcJson.Custom.map(line => String(line).trim()).filter(Boolean)
     : [];
+  const aliasesByName = new Map();
   const relationships = [];
   const seen = new Set();
+
+  function resolveAliases(expression) {
+    return String(expression).replace(/\b[A-Za-z_]\w*\b/g, token => aliasesByName.get(token) || token);
+  }
 
   function addRelationship(leftPlaceholder, rightPlaceholder, mode, source) {
     const relationship = buildInputConstantRelationship(
@@ -177,8 +182,14 @@ function getInputConstantDateRelationships(calcJson, constantsByName) {
   }
 
   for (const line of lines) {
+    const aliasMatch = line.match(/^(?:var|DateTime|DateTime\?|decimal|bool|string)\s+([A-Za-z_]\w*)\s*=\s*(\{\d+\})(?:\?\[occurrence\])?\s*;$/);
+    if (aliasMatch) {
+      aliasesByName.set(aliasMatch[1], aliasMatch[2]);
+      continue;
+    }
+
     const conditionMatch = line.match(/^(if|else if)\s*\((.+)\)/);
-    const expression = conditionMatch ? conditionMatch[2] : line;
+    const expression = resolveAliases(conditionMatch ? conditionMatch[2] : line);
 
     const comparisonMatches = Array.from(expression.matchAll(/(\{\d+\})\s*(==|<=|>=|<|>)\s*(\{\d+\})/g));
     for (const comparisonMatch of comparisonMatches) {
@@ -212,7 +223,7 @@ function getInputConstantDateRelationships(calcJson, constantsByName) {
 
   }
 
-  const combinedScript = lines.join(' ');
+  const combinedScript = resolveAliases(lines.join(' '));
   const combinedYearComparisonMatches = Array.from(combinedScript.matchAll(/DateTimeCalcHelpers\.YYYY\((\{\d+\})\)\s*(?:==|!=)\s*(\{\d+\})/g));
   for (const yearComparisonMatch of combinedYearComparisonMatches) {
     addRelationship(yearComparisonMatch[1], yearComparisonMatch[2], 'yearCycle', 'yearComparison');
@@ -263,6 +274,38 @@ function isBooleanMatrix(value) {
     && value.every(row => Array.isArray(row) && row.length > 0 && row.every(item => typeof item === 'boolean'));
 }
 
+function isBooleanCube(value) {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.every(matrix => isBooleanMatrix(matrix));
+}
+
+function isBooleanMarkerValue(value) {
+  return typeof value === 'string' && /^(X|Blank)$/i.test(value.trim());
+}
+
+function isBooleanMarkerArray(value) {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.every(item => isBooleanMarkerValue(item));
+}
+
+function isBooleanMarkerMatrix(value) {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.every(row => isBooleanMarkerArray(row));
+}
+
+function isBooleanMarkerCube(value) {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.every(matrix => isBooleanMarkerMatrix(matrix));
+}
+
+function boolToMarker(value) {
+  return value ? 'X' : 'Blank';
+}
+
 function isNumericMatrix(value) {
   return Array.isArray(value)
     && value.length > 0
@@ -271,6 +314,25 @@ function isNumericMatrix(value) {
 
 function fillMatrixShape(matrix, fillValue) {
   return matrix.map(row => Array.isArray(row) ? row.map(() => fillValue) : fillValue);
+}
+
+function fillNestedArrayShape(value, fillValue) {
+  return Array.isArray(value)
+    ? value.map(item => fillNestedArrayShape(item, fillValue))
+    : fillValue;
+}
+
+function selectedValueAlreadyMatches(currentValue, selectedValue) {
+  if (valuesEqual(currentValue, selectedValue)) {
+    return true;
+  }
+  if (selectedValue === null || selectedValue === undefined || Array.isArray(selectedValue)) {
+    return false;
+  }
+  if (Array.isArray(currentValue)) {
+    return valuesEqual(currentValue, fillNestedArrayShape(currentValue, selectedValue));
+  }
+  return false;
 }
 
 function flattenValues(value) {
@@ -316,6 +378,9 @@ function deriveProposedValue(node, constantValue) {
     if (typeof constantValue !== 'boolean') {
       return { supported: false, reason: 'Constant value is not a supported boolean.' };
     }
+    if (isBooleanMarkerArray(node.value)) {
+      return { supported: true, proposedValue: fillNestedArrayShape(node.value, boolToMarker(constantValue)) };
+    }
     if (node.value.length !== 1) {
       return { supported: false, reason: 'Scalar boolean cannot safely replace a multi-value boolean[] test output.' };
     }
@@ -323,13 +388,29 @@ function deriveProposedValue(node, constantValue) {
   }
 
   if (node.type === 'bool[][]' || node.type === 'boolean[][]' || node.type === 'Checkbox[][]') {
-    if (!isBooleanMatrix(node.value)) {
+    if (!isBooleanMatrix(node.value) && !isBooleanMarkerMatrix(node.value)) {
       return { supported: false, skip: true, reason: 'Current test value is null or not a supported boolean matrix.' };
     }
     if (typeof constantValue !== 'boolean') {
       return { supported: false, reason: 'Constant value is not a supported boolean.' };
     }
+    if (isBooleanMarkerMatrix(node.value)) {
+      return { supported: true, proposedValue: fillNestedArrayShape(node.value, boolToMarker(constantValue)) };
+    }
     return { supported: true, proposedValue: fillMatrixShape(node.value, constantValue) };
+  }
+
+  if (node.type === 'bool[][][]' || node.type === 'boolean[][][]' || node.type === 'Checkbox[][][]') {
+    if (!isBooleanCube(node.value) && !isBooleanMarkerCube(node.value)) {
+      return { supported: false, skip: true, reason: 'Current test value is null or not a supported boolean cube.' };
+    }
+    if (typeof constantValue !== 'boolean') {
+      return { supported: false, reason: 'Constant value is not a supported boolean.' };
+    }
+    if (isBooleanMarkerCube(node.value)) {
+      return { supported: true, proposedValue: fillNestedArrayShape(node.value, boolToMarker(constantValue)) };
+    }
+    return { supported: true, proposedValue: fillNestedArrayShape(node.value, constantValue) };
   }
 
   if (node.type === 'decimal') {
@@ -358,6 +439,17 @@ function deriveProposedValue(node, constantValue) {
       return { supported: false, reason: 'Constant value is not a supported decimal.' };
     }
     return { supported: true, proposedValue: [parsed] };
+  }
+
+  if (node.type === 'decimal[][]') {
+    if (!isNumericMatrix(node.value)) {
+      return { supported: false, skip: true, reason: 'Current test value is null or not a supported decimal matrix.' };
+    }
+    const parsed = Number(constantValue);
+    if (!Number.isFinite(parsed)) {
+      return { supported: false, reason: 'Constant value is not a supported decimal.' };
+    }
+    return { supported: true, proposedValue: fillMatrixShape(node.value, parsed) };
   }
 
   if (node.type === 'int' || node.type === 'integer') {
@@ -893,6 +985,18 @@ function evaluateExpression(expression, context) {
     if (!arg.ok) return arg;
     return { ok: true, value: !Boolean(arg.value), maintainedNames: arg.maintainedNames || [] };
   }
+  const ternary = splitTopLevelTernary(expr);
+  if (ternary) {
+    const condition = evaluateExpression(ternary.condition, context);
+    if (!condition.ok) return { ok: false };
+    const selected = evaluateExpression(condition.value ? ternary.whenTrue : ternary.whenFalse, context);
+    if (!selected.ok) return selected;
+    return {
+      ok: true,
+      value: selected.value,
+      maintainedNames: [...(condition.maintainedNames || []), ...(selected.maintainedNames || [])]
+    };
+  }
   if (/^\{\d+\}$/.test(expr)) {
     const entry = context.entriesByPlaceholder.get(expr);
     if (!entry) return { ok: false };
@@ -910,7 +1014,46 @@ function evaluateExpression(expression, context) {
     };
   }
 
-  let match = expr.match(/^(\{\d+\}|[A-Za-z_]\w*)\.(YYYY|YY)\(\)$/);
+  const comparison = splitTopLevelComparison(expr);
+  if (comparison) {
+    const left = evaluateExpression(comparison.left, context);
+    const right = evaluateExpression(comparison.right, context);
+    if (!left.ok || !right.ok) return { ok: false };
+    const leftNumber = Number(left.value);
+    const rightNumber = Number(right.value);
+    const compareAsNumbers = Number.isFinite(leftNumber) && Number.isFinite(rightNumber);
+    const leftValue = compareAsNumbers ? leftNumber : String(left.value);
+    const rightValue = compareAsNumbers ? rightNumber : String(right.value);
+    let value;
+    if (comparison.operator === '==') value = leftValue === rightValue;
+    if (comparison.operator === '!=') value = leftValue !== rightValue;
+    if (comparison.operator === '>') value = leftValue > rightValue;
+    if (comparison.operator === '>=') value = leftValue >= rightValue;
+    if (comparison.operator === '<') value = leftValue < rightValue;
+    if (comparison.operator === '<=') value = leftValue <= rightValue;
+    if (value === undefined) return { ok: false };
+    return {
+      ok: true,
+      value,
+      maintainedNames: [...(left.maintainedNames || []), ...(right.maintainedNames || [])]
+    };
+  }
+
+  let match = expr.match(/^DateTimeCalcHelpers\.(YYYY|YY)\((.+)\)$/);
+  if (match) {
+    const base = evaluateExpression(match[2], context);
+    if (!base.ok) return base;
+    const date = parseIsoDate(base.value);
+    if (!date) return { ok: false };
+    const year = date.getUTCFullYear();
+    return {
+      ok: true,
+      value: match[1] === 'YY' ? String(year).slice(-2) : String(year),
+      maintainedNames: base.maintainedNames || []
+    };
+  }
+
+  match = expr.match(/^(\{\d+\}|[A-Za-z_]\w*)\.(YYYY|YY)\(\)$/);
   if (match && match[1] !== 'Calc') {
     const base = evaluateExpression(match[1], context);
     if (!base.ok) return base;
@@ -968,6 +1111,19 @@ function evaluateExpression(expression, context) {
     const shiftedValue = shiftDate(base.value);
     if (!shiftedValue) return { ok: false };
     return { ok: true, value: shiftedValue, maintainedNames: base.maintainedNames || [] };
+  }
+
+  match = expr.match(/^(.+)\.(IsOnOrBefore|IsBefore|IsOnOrAfter|IsAfter)\((.+)\)$/);
+  if (match) {
+    const left = evaluateExpression(match[1], context);
+    const right = evaluateExpression(match[3], context);
+    if (!left.ok || !right.ok) return { ok: false };
+    if (!parseIsoDate(left.value) || !parseIsoDate(right.value)) return { ok: false };
+    return {
+      ok: true,
+      value: compareIsoDateValues(left.value, right.value, match[2]),
+      maintainedNames: [...(left.maintainedNames || []), ...(right.maintainedNames || [])]
+    };
   }
 
   match = expr.match(/^(\{\d+\})\.AgeAsOf\((\{\d+\})\)$/);
@@ -1057,6 +1213,10 @@ function evaluateExpression(expression, context) {
   match = expr.match(/^"([\s\S]*)"$/);
   if (match) {
     return { ok: true, value: match[1], maintainedNames: [] };
+  }
+  match = expr.match(/^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$/);
+  if (match) {
+    return { ok: true, value: expr.split('.').pop(), maintainedNames: [] };
   }
   if (/^(true|false)$/i.test(expr)) {
     return { ok: true, value: /^true$/i.test(expr), maintainedNames: [] };
@@ -1280,6 +1440,54 @@ function splitTopLevelComparison(value) {
   return null;
 }
 
+function splitTopLevelTernary(value) {
+  let depth = 0;
+  let inString = false;
+  let questionIndex = -1;
+  for (let index = 0; index < value.length; index++) {
+    const char = value[index];
+    if (char === '"' && value[index - 1] !== '\\') inString = !inString;
+    if (inString) continue;
+    if (char === '(') depth++;
+    if (char === ')') depth--;
+    if (depth === 0 && char === '?') {
+      questionIndex = index;
+      break;
+    }
+  }
+  if (questionIndex === -1) {
+    return null;
+  }
+
+  depth = 0;
+  inString = false;
+  let nestedTernaries = 0;
+  for (let index = questionIndex + 1; index < value.length; index++) {
+    const char = value[index];
+    if (char === '"' && value[index - 1] !== '\\') inString = !inString;
+    if (inString) continue;
+    if (char === '(') depth++;
+    if (char === ')') depth--;
+    if (depth !== 0) continue;
+    if (char === '?') {
+      nestedTernaries++;
+      continue;
+    }
+    if (char === ':') {
+      if (nestedTernaries > 0) {
+        nestedTernaries--;
+        continue;
+      }
+      return {
+        condition: value.slice(0, questionIndex).trim(),
+        whenTrue: value.slice(questionIndex + 1, index).trim(),
+        whenFalse: value.slice(index + 1).trim()
+      };
+    }
+  }
+  return null;
+}
+
 function conditionMatchesTestCase(condition, context, testCase) {
   const trimmed = stripOuterParens(condition);
   const andParts = splitTopLevelOperator(trimmed, '&&');
@@ -1382,22 +1590,57 @@ function getComputedReturnConstant(calcJson, constantsByName, allConstantsByName
   const variables = {};
   const context = { entriesByPlaceholder, variables, testCase };
 
+  function buildComputedReturn(evaluated, maintainedNames) {
+    const names = Array.from(new Set(maintainedNames));
+    if (evaluated.ok && names.length) {
+      return {
+        constantName: names.join(', '),
+        constantValue: evaluated.value
+      };
+    }
+    return null;
+  }
+
+  function evaluateReturnExpression(expression, maintainedNames = []) {
+    const evaluated = evaluateExpression(expression, context);
+    return buildComputedReturn(evaluated, [
+      ...maintainedNames,
+      ...(evaluated.maintainedNames || [])
+    ]);
+  }
+
+  function evaluateReturnFromLines(blockLines, inheritedMaintainedNames = []) {
+    for (let blockIndex = 0; blockIndex < blockLines.length; blockIndex++) {
+      const nestedIfMatch = blockLines[blockIndex].match(/^if\s*\((.+)\)\s*(\{)?$/);
+      if (nestedIfMatch && !nestedIfMatch[2]) {
+        const nestedReturnMatch = blockLines[blockIndex + 1]?.match(/^return\s+(.+);$/);
+        if (nestedReturnMatch) {
+          if (conditionMatchesTestCase(nestedIfMatch[1], context, testCase)) {
+            return evaluateReturnExpression(nestedReturnMatch[1], [
+              ...inheritedMaintainedNames,
+              ...getConditionMaintainedNames(nestedIfMatch[1], context)
+            ]);
+          }
+          blockIndex++;
+          continue;
+        }
+      }
+
+      const returnMatch = blockLines[blockIndex].match(/^return\s+(.+);$/);
+      if (returnMatch) {
+        return evaluateReturnExpression(returnMatch[1], inheritedMaintainedNames);
+      }
+    }
+    return null;
+  }
+
   for (let index = 0; index < lines.length; index++) {
     const inlineIfMatch = lines[index].match(/^if\s*\((.+)\)\s*return\s+(.+);$/);
     if (inlineIfMatch) {
       const conditionMaintainedNames = getConditionMaintainedNames(inlineIfMatch[1], context);
       if (conditionMatchesTestCase(inlineIfMatch[1], context, testCase)) {
-        const evaluated = evaluateExpression(inlineIfMatch[2], context);
-        const maintainedNames = Array.from(new Set([
-          ...conditionMaintainedNames,
-          ...(evaluated.maintainedNames || [])
-        ]));
-        if (evaluated.ok && maintainedNames.length) {
-          return {
-            constantName: maintainedNames.join(', '),
-            constantValue: evaluated.value
-          };
-        }
+        const computedReturn = evaluateReturnExpression(inlineIfMatch[2], conditionMaintainedNames);
+        if (computedReturn) return computedReturn;
       }
       continue;
     }
@@ -1410,19 +1653,9 @@ function getComputedReturnConstant(calcJson, constantsByName, allConstantsByName
         closeIndex++;
       }
       const blockLines = lines.slice(blockStartIndex, closeIndex);
-      const returnLine = blockLines.find(line => /^return\s+.+;$/.test(line));
-      if (returnLine && conditionMatchesTestCase(ifMatch[1], context, testCase)) {
-        const evaluated = evaluateExpression(returnLine.replace(/^return\s+/, '').replace(/;$/, ''), context);
-        const maintainedNames = Array.from(new Set([
-          ...getConditionMaintainedNames(ifMatch[1], context),
-          ...(evaluated.maintainedNames || [])
-        ]));
-        if (evaluated.ok && maintainedNames.length) {
-          return {
-            constantName: maintainedNames.join(', '),
-            constantValue: evaluated.value
-          };
-        }
+      if (conditionMatchesTestCase(ifMatch[1], context, testCase)) {
+        const computedReturn = evaluateReturnFromLines(blockLines, getConditionMaintainedNames(ifMatch[1], context));
+        if (computedReturn) return computedReturn;
       }
       index = closeIndex;
       continue;
@@ -1439,13 +1672,8 @@ function getComputedReturnConstant(calcJson, constantsByName, allConstantsByName
 
     const returnMatch = lines[index].match(/^return\s+(.+);$/);
     if (returnMatch) {
-      const evaluated = evaluateExpression(returnMatch[1], context);
-      if (evaluated.ok && evaluated.maintainedNames?.length) {
-        return {
-          constantName: Array.from(new Set(evaluated.maintainedNames)).join(', '),
-          constantValue: evaluated.value
-        };
-      }
+      const computedReturn = evaluateReturnExpression(returnMatch[1]);
+      if (computedReturn) return computedReturn;
     }
   }
 
@@ -1548,6 +1776,69 @@ function getDateYearsFromInputValue(value) {
 
 function testCaseExpectsBlankOutput(testCase) {
   return Boolean(testCase?.expectsBlank) || testCase?.output?.value === null || testCase?.output?.value === undefined;
+}
+
+function hasSiblingNullOutput(rootTestJson, currentOutputNode, calcJson) {
+  if (!Array.isArray(rootTestJson)) {
+    return false;
+  }
+
+  let hasSiblingNull = false;
+  function visitOutputNode(node) {
+    if (hasSiblingNull || !node || typeof node !== 'object') {
+      return;
+    }
+    if (Array.isArray(node)) {
+      node.forEach(visitOutputNode);
+      return;
+    }
+    if (node !== currentOutputNode && matchesCalcOutput(node, calcJson) && (node.value === null || node.value === undefined)) {
+      hasSiblingNull = true;
+      return;
+    }
+    Object.entries(node).forEach(([key, value]) => {
+      if (key !== 'value') {
+        visitOutputNode(value);
+      }
+    });
+  }
+
+  visitOutputNode(rootTestJson);
+  return hasSiblingNull;
+}
+
+function buildCaseInputCandidates(testCase, casePathParts) {
+  const inputs = Array.isArray(testCase?.inputs) ? testCase.inputs : [];
+  return inputs.map((input, index) => ({
+    label: [input.form, input.field].filter(Boolean).join('/') || `Input ${index + 1}`,
+    fieldPath: [...casePathParts, 'inputs', index].join('.'),
+    valuePath: [...casePathParts, 'inputs', index, 'value'].join('.'),
+    type: input.type || '',
+    tomType: input.tomType || '',
+    currentValue: cloneValue(input.value)
+  }));
+}
+
+function buildCaseOutputCandidate(testCase, casePathParts) {
+  const output = testCase?.output;
+  if (!output || !Object.prototype.hasOwnProperty.call(output, 'value')) {
+    return null;
+  }
+  return {
+    label: [output.form, output.field].filter(Boolean).join('/') || 'Output',
+    fieldPath: [...casePathParts, 'output'].join('.') || 'output',
+    valuePath: [...casePathParts, 'output', 'value'].join('.'),
+    type: output.type || '',
+    tomType: output.tomType || '',
+    currentValue: cloneValue(output.value)
+  };
+}
+
+function buildManualEditContext(testCase, casePathParts) {
+  return {
+    inputCandidates: buildCaseInputCandidates(testCase, casePathParts),
+    outputCandidate: buildCaseOutputCandidate(testCase, casePathParts)
+  };
 }
 
 function buildPreviewRows({ calcJson, testJson, calcFilePath, testFilePath, constantsByName, allConstantsByName = constantsByName }) {
@@ -1658,7 +1949,8 @@ function buildPreviewRows({ calcJson, testJson, calcFilePath, testFilePath, cons
           currentValue: cloneValue(inputEntry.input.value),
           proposedValue: '',
           canApply: false,
-          reason: derived.reason
+          reason: derived.reason,
+          ...buildManualEditContext(testCase, casePathParts)
         });
         continue;
       }
@@ -1753,13 +2045,13 @@ function buildPreviewRows({ calcJson, testJson, calcFilePath, testFilePath, cons
     return testCaseForOutput;
   }
 
-  function visit(node, pathParts, caseName, testCase, selectedConstant) {
+  function visit(node, pathParts, caseName, testCase, selectedConstant, casePathPartsForEdit = []) {
     if (!node || typeof node !== 'object') {
       return;
     }
 
     if (Array.isArray(node)) {
-      node.forEach((item, index) => visit(item, [...pathParts, index], caseName, testCase, selectedConstant));
+      node.forEach((item, index) => visit(item, [...pathParts, index], caseName, testCase, selectedConstant, casePathPartsForEdit));
       return;
     }
 
@@ -1777,6 +2069,12 @@ function buildPreviewRows({ calcJson, testJson, calcFilePath, testFilePath, cons
         if (derived.skip) {
           return;
         }
+        if ((node.value === null || node.value === undefined) && hasSiblingNullOutput(testJson, node, calcJson)) {
+          return;
+        }
+        if (selectedValueAlreadyMatches(node.value, selectedConstant.constantValue)) {
+          return;
+        }
         rows.push({
           rowKind: 'output',
           filePath: testFilePath,
@@ -1791,7 +2089,8 @@ function buildPreviewRows({ calcJson, testJson, calcFilePath, testFilePath, cons
           currentValue: node.value,
           proposedValue: '',
           canApply: false,
-          reason: derived.reason
+          reason: derived.reason,
+          ...buildManualEditContext(testCase, casePathPartsForEdit)
         });
         return;
       }
@@ -1819,7 +2118,7 @@ function buildPreviewRows({ calcJson, testJson, calcFilePath, testFilePath, cons
 
     Object.entries(node).forEach(([key, value]) => {
       if (key === 'value') return;
-      visit(value, [...pathParts, key], currentCaseName, testCase, selectedConstant);
+      visit(value, [...pathParts, key], currentCaseName, testCase, selectedConstant, casePathPartsForEdit);
     });
   }
 
@@ -1832,7 +2131,7 @@ function buildPreviewRows({ calcJson, testJson, calcFilePath, testFilePath, cons
       const inputRows = addInputComparisonRows(testCase, casePathParts, currentCaseName);
       const outputEvaluationTestCase = buildOutputEvaluationTestCase(testCase, casePathParts, inputRows);
       const selectedConstant = resolveReturnConstant(calcJson, constantsByName, outputEvaluationTestCase, allConstantsByName);
-      visit(testCase, [index], null, testCase, selectedConstant);
+      visit(testCase, [index], null, testCase, selectedConstant, casePathParts);
     });
   } else {
     const currentCaseName = (typeof testJson?.name === 'string' || typeof testJson?.name === 'number')
@@ -1841,7 +2140,7 @@ function buildPreviewRows({ calcJson, testJson, calcFilePath, testFilePath, cons
     const inputRows = addInputComparisonRows(testJson, [], currentCaseName);
     const outputEvaluationTestCase = buildOutputEvaluationTestCase(testJson, [], inputRows);
     const selectedConstant = resolveReturnConstant(calcJson, constantsByName, outputEvaluationTestCase, allConstantsByName);
-    visit(testJson, [], null, testJson, selectedConstant);
+    visit(testJson, [], null, testJson, selectedConstant, []);
   }
   return { rows };
 }
@@ -1919,7 +2218,12 @@ function serializeTestJson(testJson) {
 function applyPreviewRows(testJson, rows) {
   rows
     .filter(row => row?.canApply !== false)
-    .forEach(row => setValueAtPath(testJson, row.valuePath, row.proposedValue));
+    .forEach(row => {
+      const updates = Array.isArray(row.updates) && row.updates.length
+        ? row.updates
+        : [{ valuePath: row.valuePath, proposedValue: row.proposedValue }];
+      updates.forEach(update => setValueAtPath(testJson, update.valuePath, update.proposedValue));
+    });
   return testJson;
 }
 

@@ -20,7 +20,9 @@
       "pathUtils.js",
       "preload.js",
       "renderer.js",
+      "calcViewer.js",
       "index.html",
+      "calcViewer.html",
       "styles.css",
       "States/**",
       "assets/**"

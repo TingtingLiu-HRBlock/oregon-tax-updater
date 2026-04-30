@@ -165,6 +165,12 @@
         <button id="calcModalCalcTab" class="diff-tab calc-modal-tab active" type="button" role="tab" aria-selected="true" data-calc-modal-tab="calc">Calc JSON</button>
         <button id="calcModalTestTab" class="diff-tab calc-modal-tab" type="button" role="tab" aria-selected="false" data-calc-modal-tab="unitTest">Unit Test JSON</button>
       </div>
+      <div class="calc-modal-search">
+        <input id="calcModalSearchInput" class="text-input calc-modal-search-input" type="search" placeholder="Find in current file" autocomplete="off" />
+        <span id="calcModalSearchCount" class="calc-modal-search-count">0 matches</span>
+        <button id="calcModalSearchPrevBtn" class="btn btn-outline btn-sm" type="button">Previous</button>
+        <button id="calcModalSearchNextBtn" class="btn btn-outline btn-sm" type="button">Next</button>
+      </div>
       <pre id="calcModalCalcContent" class="calc-modal-content calc-modal-pane active" role="tabpanel"></pre>
       <pre id="calcModalTestContent" class="calc-modal-content calc-modal-pane" role="tabpanel"></pre>
     </div>

@@ -176,6 +176,48 @@ function isNullOnlyLogValue(rawValue) {
   return /^\(null\)$/i.test(String(rawValue ?? '').trim());
 }
 
+function isBlankLogValue(rawValue) {
+  return /^\(Is Blank\)$/i.test(String(rawValue ?? '').trim())
+    || /^Blank$/i.test(String(rawValue ?? '').trim());
+}
+
+function isStringLikeOutputType(type) {
+  return typeof type === 'string' && /^(string|datetime)(\[\])*$/i.test(type.trim());
+}
+
+function isUnsafeBlankEnumLikeUpdate(output, proposedValue, rawValue) {
+  return proposedValue === ''
+    && isBlankLogValue(rawValue)
+    && !isStringLikeOutputType(output?.type || '');
+}
+
+function getValueAtPathParts(root, pathParts) {
+  return pathParts.reduce((current, part) => current?.[part], root);
+}
+
+function isSafeBlankOutputValue(value) {
+  return value === null
+    || value === false
+    || (typeof value === 'string' && /^(Blank|None|No|False)$/i.test(value.trim()));
+}
+
+function findSiblingBlankOutputValue(testJson, currentTestCase, output, pathParts = []) {
+  for (const testCase of getTestCases(testJson)) {
+    if (!testCase || testCase === currentTestCase) {
+      continue;
+    }
+    const candidateOutput = testCase.output;
+    if (!outputsDescribeSameCalc(candidateOutput, output)) {
+      continue;
+    }
+    const candidateValue = getValueAtPathParts(candidateOutput?.value, pathParts);
+    if (isSafeBlankOutputValue(candidateValue)) {
+      return { found: true, value: candidateValue };
+    }
+  }
+  return { found: false };
+}
+
 function flattenScalarPaths(value, pathParts = []) {
   if (!Array.isArray(value)) {
     return [{ pathParts, value }];
@@ -217,6 +259,20 @@ function hasSameCaseNullableInput(currentTestCase, output) {
   });
 }
 
+function buildInputEditCandidates(testCase, pathParts) {
+  const inputs = Array.isArray(testCase?.inputs) ? testCase.inputs : [];
+  return inputs
+    .map((input, index) => ({ input, index }))
+    .map(({ input, index }) => ({
+      label: [input.form, input.field].filter(Boolean).join('/') || `Input ${index + 1}`,
+      fieldPath: [...pathParts, 'inputs', index].join('.'),
+      valuePath: [...pathParts, 'inputs', index, 'value'].join('.'),
+      type: input.type || '',
+      tomType: input.tomType || '',
+      currentValue: input.value
+    }));
+}
+
 function setValueAtPath(root, valuePath, nextValue) {
   const parts = valuePath.split('.');
   let current = root;
@@ -246,6 +302,7 @@ function buildFailureRow(failure, filePath, testJson) {
   const basePath = [...match.pathParts, 'output', 'value'].join('.');
   const fieldPath = [...match.pathParts, 'output'].join('.') || 'output';
   const calcFieldPath = `${output.entity || ''}/${output.form || ''}/${output.field || ''}`;
+  const inputCandidates = buildInputEditCandidates(match.testCase, match.pathParts);
   const buildManualOutputRow = (reason, options = {}) => ({
     ...failure,
     filePath,
@@ -258,6 +315,7 @@ function buildFailureRow(failure, filePath, testJson) {
     constantName: 'Runtime actual from unit test log',
     currentValue: options.currentValue !== undefined ? options.currentValue : output.value,
     proposedValue: '',
+    inputCandidates,
     canApply: false,
     reason
   });
@@ -280,6 +338,7 @@ function buildFailureRow(failure, filePath, testJson) {
           constantName: 'Runtime actual from unit test log',
           currentValue: output.value,
           proposedValue: null,
+          inputCandidates,
           canApply: true,
           reason: 'Null output inferred from nullable test context.'
         };
@@ -313,6 +372,7 @@ function buildFailureRow(failure, filePath, testJson) {
         constantName: 'Runtime actual from unit test log',
         currentValue: output.value,
         proposedValue: proposedArray,
+        inputCandidates,
         canApply: true,
         reason: ''
       };
@@ -338,6 +398,7 @@ function buildFailureRow(failure, filePath, testJson) {
         constantName: 'Runtime actual from unit test log',
         currentValue: output.value,
         proposedValue: proposedArray,
+        inputCandidates,
         canApply: true,
         reason: ''
       };
@@ -354,6 +415,38 @@ function buildFailureRow(failure, filePath, testJson) {
     const proposedElement = convertLogValue(failure.actualRaw, currentElement);
     if (typeof proposedElement === 'symbol') {
       return buildManualOutputRow('Log actual value only says the output is not blank.');
+    }
+    if (isUnsafeBlankEnumLikeUpdate(output, proposedElement, failure.actualRaw)) {
+      const siblingBlank = findSiblingBlankOutputValue(testJson, match.testCase, output, scalarMatch.pathParts);
+      if (siblingBlank.found) {
+        if (!valuesEqual(currentElement, expectedValue)) {
+          return buildManualOutputRow('Current output no longer matches the log expected value.', {
+            valuePath: [basePath, ...scalarMatch.pathParts].join('.'),
+            currentValue: currentElement
+          });
+        }
+        return {
+          ...failure,
+          rowKind: 'logOutput',
+          filePath,
+          calcFieldPath,
+          caseName,
+          fieldPath,
+          valuePath: [basePath, ...scalarMatch.pathParts].join('.'),
+          type: output.type || '',
+          tomType: output.tomType || '',
+          constantName: 'Runtime actual from unit test log',
+          currentValue: currentElement,
+          proposedValue: siblingBlank.value,
+          inputCandidates,
+          canApply: true,
+          reason: 'Blank output inferred from sibling test case.'
+        };
+      }
+      return buildManualOutputRow('Log actual value is blank for a non-string output type; review to avoid invalid generated enum syntax.', {
+        valuePath: [basePath, ...scalarMatch.pathParts].join('.'),
+        currentValue: currentElement
+      });
     }
     if (!valuesEqual(currentElement, expectedValue)) {
       return buildManualOutputRow('Current output no longer matches the log expected value.', {
@@ -374,6 +467,7 @@ function buildFailureRow(failure, filePath, testJson) {
       constantName: 'Runtime actual from unit test log',
       currentValue: currentElement,
       proposedValue: proposedElement,
+      inputCandidates,
       canApply: true,
       reason: ''
     };
@@ -383,6 +477,32 @@ function buildFailureRow(failure, filePath, testJson) {
   const proposedValue = convertLogValue(failure.actualRaw, output.value);
   if (typeof proposedValue === 'symbol') {
     return buildManualOutputRow('Log actual value only says the output is not blank.');
+  }
+  if (isUnsafeBlankEnumLikeUpdate(output, proposedValue, failure.actualRaw)) {
+    const siblingBlank = findSiblingBlankOutputValue(testJson, match.testCase, output);
+    if (siblingBlank.found) {
+      if (!valuesEqual(output.value, expectedValue)) {
+        return buildManualOutputRow('Current output no longer matches the log expected value.');
+      }
+      return {
+        ...failure,
+        rowKind: 'logOutput',
+        filePath,
+        calcFieldPath,
+        caseName,
+        fieldPath,
+        valuePath: basePath,
+        type: output.type || '',
+        tomType: output.tomType || '',
+        constantName: 'Runtime actual from unit test log',
+        currentValue: output.value,
+        proposedValue: siblingBlank.value,
+        inputCandidates,
+        canApply: true,
+        reason: 'Blank output inferred from sibling test case.'
+      };
+    }
+    return buildManualOutputRow('Log actual value is blank for a non-string output type; review to avoid invalid generated enum syntax.');
   }
   if (!valuesEqual(output.value, expectedValue)) {
     return buildManualOutputRow('Current output no longer matches the log expected value.');
@@ -400,6 +520,7 @@ function buildFailureRow(failure, filePath, testJson) {
     constantName: 'Runtime actual from unit test log',
     currentValue: output.value,
     proposedValue,
+    inputCandidates,
     canApply: true,
     reason: ''
   };
@@ -438,7 +559,7 @@ async function buildLogUpdatePreview({ rootPath, stateCode, logPath, regulatoryY
 
 async function applyLogUpdateRows(rows) {
   const rowsByFile = new Map();
-  for (const row of rows.filter(candidate => candidate?.canApply && candidate.filePath && candidate.valuePath)) {
+  for (const row of rows.filter(candidate => candidate?.canApply && candidate.filePath && (candidate.valuePath || candidate.updates?.length))) {
     if (!rowsByFile.has(row.filePath)) rowsByFile.set(row.filePath, []);
     rowsByFile.get(row.filePath).push(row);
   }
@@ -451,10 +572,19 @@ async function applyLogUpdateRows(rows) {
   for (const [filePath, fileRows] of rowsByFile.entries()) {
     const raw = await fs.readFile(filePath, 'utf-8');
     const parsed = parseRelaxedJson(raw);
-    fileRows.forEach(row => setValueAtPath(parsed, row.valuePath, row.proposedValue));
+    let fileUpdateCount = 0;
+    fileRows.forEach(row => {
+      const updates = Array.isArray(row.updates) && row.updates.length
+        ? row.updates
+        : [{ valuePath: row.valuePath, proposedValue: row.proposedValue }];
+      updates.forEach(update => {
+        setValueAtPath(parsed, update.valuePath, update.proposedValue);
+        fileUpdateCount += 1;
+      });
+    });
     await fs.writeFile(filePath, serializeTestJson(parsed), 'utf-8');
     updatedFileCount++;
-    updatedValueCount += fileRows.length;
+    updatedValueCount += fileUpdateCount;
   }
   return { success: true, updatedFileCount, updatedValueCount };
 }

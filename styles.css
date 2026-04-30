@@ -685,6 +685,55 @@ label {
   white-space: normal;
 }
 
+.unit-test-log-editor-block {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  max-width: 620px;
+}
+
+.unit-test-log-editor-block:first-child {
+  margin-top: 0;
+}
+
+.unit-test-log-editor-title {
+  color: var(--text-3);
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.unit-test-log-input-edit {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(90px, 120px) minmax(220px, 280px);
+  align-items: start;
+  gap: 8px;
+  color: var(--text-3);
+  font-family: var(--sans);
+  font-size: 11px;
+}
+
+.unit-test-log-input-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+
+.unit-test-log-current-value {
+  color: var(--text-2);
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+  padding-top: 9px;
+}
+
+.unit-test-log-input-edit .text-input {
+  width: 100%;
+  min-width: 0;
+}
+
 .unit-test-override-badge {
   margin-left: 6px;
 }
@@ -718,6 +767,10 @@ label {
   overflow: hidden;
 }
 
+.calc-modal.dragging {
+  user-select: none;
+}
+
 .calc-modal-header {
   display: flex;
   align-items: flex-start;
@@ -725,6 +778,16 @@ label {
   gap: 16px;
   padding: 16px 18px;
   border-bottom: 1px solid var(--border);
+  cursor: grab;
+  touch-action: none;
+}
+
+.calc-modal.dragging .calc-modal-header {
+  cursor: grabbing;
+}
+
+.calc-modal-header button {
+  cursor: pointer;
 }
 
 .calc-modal-tabs {
@@ -737,6 +800,26 @@ label {
 .calc-modal-tab {
   min-width: 132px;
   justify-content: center;
+}
+
+.calc-modal-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px 12px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.calc-modal-search-input {
+  width: min(360px, 100%);
+}
+
+.calc-modal-search-count {
+  min-width: 84px;
+  color: var(--text-3);
+  font-family: var(--mono);
+  font-size: 11px;
 }
 
 .calc-modal-pane {
@@ -758,6 +841,59 @@ label {
   font-size: 12px;
   line-height: 1.55;
   white-space: pre;
+}
+
+.calc-modal-search-match {
+  background: rgba(245, 158, 11, 0.32);
+  color: var(--text);
+  border-radius: 2px;
+}
+
+.calc-modal-search-match.active {
+  background: var(--amber);
+  color: #000;
+}
+
+.viewer-body {
+  min-height: 100vh;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.viewer-shell {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 18px;
+}
+
+.viewer-header {
+  padding-bottom: 12px;
+}
+
+.viewer-tabs {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.viewer-search {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.viewer-content-shell {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.viewer-content {
+  min-height: 0;
+  width: 100%;
+  border-radius: 0;
 }
 
 .income-col { color: var(--text); font-weight: 500; }

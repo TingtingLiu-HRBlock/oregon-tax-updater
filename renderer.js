@@ -394,13 +394,14 @@ function renderWorkflowText() {
         : isCoFamilyAffordabilityWorkflow()
           ? 'Writes full replacement Colorado Family Affordability tables after you review both extracted grids.'
           : unitTestWorkflow
-            ? 'Writes only the previewed unit test expectation updates that were derived safely from direct constant-return calc dependencies.'
+            ? 'Use the apply button inside each unit-test review tab: ready rows apply automatically, while manual rows apply only after you enter reviewed values.'
           : constantsWorkflow
             ? (constantsManualTab
               ? 'Writes the reviewed final values from the manual year-over-year constants tab.'
-              : 'Writes the selected +1 or -1 year shift to every matching Year Over Year DateTime constant in the automatic updates tab.')
+              : 'Writes the reviewed DateTime values from the automatic constants tab, then removes those rows from this preview.')
             : 'Writes new values to all filing status files. Review the diff above before proceeding.';
   document.getElementById('updateJsonBtn').textContent = getUpdateButtonText(false);
+  document.getElementById('updateJsonBtn').style.display = unitTestWorkflow ? 'none' : '';
   document.getElementById('constantsShiftControls').style.display = constantsWorkflow ? 'flex' : 'none';
   const unitTestLogControls = document.getElementById('unitTestLogControls');
   if (unitTestLogControls) unitTestLogControls.style.display = unitTestWorkflow ? 'flex' : 'none';
@@ -1856,37 +1857,146 @@ function parseUnitTestManualValue(row, rawValue) {
   return { success: true, value: text };
 }
 
+function getUnitTestOverrideText(row) {
+  return row?.readyOverrideText ?? row?.manualOverrideText ?? '';
+}
+
+function hasReadyOverrideChanged(row) {
+  return row?.canApply && String(row.readyOverrideText ?? '') !== String(formatUnitTestReviewValue(row.proposedValue));
+}
+
+function buildUnitTestReadyApplyRow(row, options = {}) {
+  if (!row?.canApply) return null;
+  if (!hasReadyOverrideChanged(row)) {
+    return row;
+  }
+
+  const parsed = parseUnitTestManualValue(row, row.readyOverrideText);
+  if (!parsed.success) {
+    if (options.collectErrors) {
+      return {
+        error: `${row.caseName || 'Case'} ${row.fieldPath || row.valuePath}: ${parsed.message}`
+      };
+    }
+    return null;
+  }
+
+  return {
+    ...row,
+    proposedValue: parsed.value,
+    reason: 'User-edited ready value'
+  };
+}
+
 function getUnitTestManualOverrideRows(review, options = {}) {
   const collectErrors = options.collectErrors === true;
   const rows = [];
   const errors = [];
   for (const row of review?.manualRows || []) {
-    if (!String(row.manualOverrideText ?? '').trim()) {
+    const updates = [];
+    const hasPrimaryOverride = String(row.manualOverrideText ?? '').trim();
+    const inputOverrides = (row.inputCandidates || [])
+      .filter(input => input.valuePath !== row.valuePath && String(input.manualOverrideText ?? '').trim());
+    const outputOverride = row.outputCandidate
+      && row.outputCandidate.valuePath !== row.valuePath
+      && String(row.outputCandidate.manualOverrideText ?? '').trim()
+      ? row.outputCandidate
+      : null;
+    if (!hasPrimaryOverride && !inputOverrides.length && !outputOverride) {
       continue;
     }
-    const parsed = parseUnitTestManualValue(row, row.manualOverrideText);
-    if (!parsed.success) {
+    let proposedValue = row.proposedValue;
+    if (hasPrimaryOverride) {
+      const parsed = parseUnitTestManualValue(row, row.manualOverrideText);
+      if (!parsed.success) {
+        if (collectErrors) {
+          errors.push(`${row.caseName || 'Case'} ${row.fieldPath || row.valuePath}: ${parsed.message}`);
+        }
+        continue;
+      }
+      proposedValue = parsed.value;
+      updates.push({ valuePath: row.valuePath, proposedValue: parsed.value });
+    }
+    let candidateError = null;
+    for (const input of inputOverrides) {
+      const parsed = parseUnitTestManualValue(input, input.manualOverrideText);
+      if (!parsed.success) {
+        candidateError = `${row.caseName || 'Case'} ${input.fieldPath || input.valuePath}: ${parsed.message}`;
+        break;
+      }
+      updates.push({ valuePath: input.valuePath, proposedValue: parsed.value });
+    }
+    if (!candidateError && outputOverride) {
+      const parsed = parseUnitTestManualValue(outputOverride, outputOverride.manualOverrideText);
+      if (!parsed.success) {
+        candidateError = `${row.caseName || 'Case'} ${outputOverride.fieldPath || outputOverride.valuePath}: ${parsed.message}`;
+      } else {
+        updates.push({ valuePath: outputOverride.valuePath, proposedValue: parsed.value });
+      }
+    }
+    if (candidateError) {
       if (collectErrors) {
-        errors.push(`${row.caseName || 'Case'} ${row.fieldPath || row.valuePath}: ${parsed.message}`);
+        errors.push(candidateError);
       }
       continue;
     }
     rows.push({
       ...row,
       canApply: true,
-      proposedValue: parsed.value,
+      proposedValue,
+      updates,
       reason: 'User-entered manual review value'
     });
   }
   return collectErrors ? { rows, errors } : rows;
 }
 
+function getUnitTestReadyApplyRows(review, options = {}) {
+  const collectErrors = options.collectErrors === true;
+  const rows = [];
+  const errors = [];
+  for (const row of review?.rows || []) {
+    const applyRow = buildUnitTestReadyApplyRow(row, { collectErrors });
+    if (!applyRow) continue;
+    if (applyRow.error) {
+      errors.push(applyRow.error);
+      continue;
+    }
+    rows.push(applyRow);
+  }
+  return collectErrors ? { rows, errors } : rows;
+}
+
+function hasUnitTestManualOverrideText(review) {
+  return (review?.manualRows || []).some(row => {
+    return String(row.manualOverrideText ?? '').trim()
+      || (row.inputCandidates || []).some(input => String(input.manualOverrideText ?? '').trim())
+      || String(row.outputCandidate?.manualOverrideText ?? '').trim();
+  });
+}
+
 function getUnitTestDateRollerApplyRows(review) {
   if (!review?.rows?.length) return [];
   return [
-    ...review.rows.filter(row => row.canApply),
+    ...getUnitTestReadyApplyRows(review),
     ...getUnitTestManualOverrideRows(review)
   ];
+}
+
+function rebuildUnitTestDateRollerReviewFromRows(review, rows) {
+  const indexedRows = rows.map((row, index) => ({ ...row, index }));
+  const readyRows = indexedRows.filter(row => row.canApply);
+  const manualRows = indexedRows.filter(row => !row.canApply);
+  const uniqueCases = new Set(indexedRows.map(row => `${row.filePath}::${row.caseName}`));
+  return {
+    ...review,
+    rows: indexedRows,
+    readyRows,
+    manualRows,
+    caseCount: uniqueCases.size,
+    updateCount: readyRows.length,
+    reviewCount: manualRows.length
+  };
 }
 
 function deriveUnitTestCalcFilePath(testFilePath) {
@@ -1907,32 +2017,141 @@ function getUnitTestLogManualOverrideRows(review, options = {}) {
   const rows = [];
   const errors = [];
   for (const row of review?.rows || []) {
-    if (row.canApply || !String(row.manualOverrideText ?? '').trim()) continue;
+    if (row.canApply) continue;
+    const updates = [];
+    const hasOutputOverride = String(row.manualOverrideText ?? '').trim();
+    const inputOverrides = (row.inputCandidates || [])
+      .filter(input => String(input.manualOverrideText ?? '').trim());
+    if (!hasOutputOverride && !inputOverrides.length) continue;
     if (!row.filePath || !row.valuePath) {
       if (collectErrors) errors.push(`${row.caseName || 'Case'} cannot be manually applied because it was not mapped to a writable output value.`);
       continue;
     }
-    const parsed = parseUnitTestManualValue(row, row.manualOverrideText);
-    if (!parsed.success) {
-      if (collectErrors) errors.push(`${row.caseName || 'Case'} ${row.fieldPath || row.valuePath}: ${parsed.message}`);
+    let proposedValue = row.proposedValue;
+    if (hasOutputOverride) {
+      const parsed = parseUnitTestManualValue(row, row.manualOverrideText);
+      if (!parsed.success) {
+        if (collectErrors) errors.push(`${row.caseName || 'Case'} ${row.fieldPath || row.valuePath}: ${parsed.message}`);
+        continue;
+      }
+      proposedValue = parsed.value;
+      updates.push({ valuePath: row.valuePath, proposedValue: parsed.value });
+    }
+    let inputError = null;
+    for (const input of inputOverrides) {
+      const parsed = parseUnitTestManualValue(input, input.manualOverrideText);
+      if (!parsed.success) {
+        inputError = `${row.caseName || 'Case'} ${input.fieldPath || input.valuePath}: ${parsed.message}`;
+        break;
+      }
+      updates.push({ valuePath: input.valuePath, proposedValue: parsed.value });
+    }
+    if (inputError) {
+      if (collectErrors) errors.push(inputError);
       continue;
     }
     rows.push({
       ...row,
       canApply: true,
-      proposedValue: parsed.value,
+      proposedValue,
+      updates,
       reason: 'User-entered failed-output review value'
     });
   }
   return collectErrors ? { rows, errors } : rows;
 }
 
+function buildUnitTestLogReadyApplyRow(row, options = {}) {
+  if (!row?.canApply) return null;
+  const updates = [];
+  let proposedValue = row.proposedValue;
+  const hasOutputOverride = String(row.readyOverrideText ?? '').trim();
+  const inputOverrides = (row.inputCandidates || [])
+    .filter(input => String(input.manualOverrideText ?? '').trim());
+
+  if (hasOutputOverride) {
+    const parsed = parseUnitTestManualValue(row, row.readyOverrideText);
+    if (!parsed.success) {
+      if (options.collectErrors) {
+        return { error: `${row.caseName || 'Case'} ${row.fieldPath || row.valuePath}: ${parsed.message}` };
+      }
+      return null;
+    }
+    proposedValue = parsed.value;
+  }
+
+  let inputError = null;
+  for (const input of inputOverrides) {
+    const parsed = parseUnitTestManualValue(input, input.manualOverrideText);
+    if (!parsed.success) {
+      inputError = `${row.caseName || 'Case'} ${input.fieldPath || input.valuePath}: ${parsed.message}`;
+      break;
+    }
+    updates.push({ valuePath: input.valuePath, proposedValue: parsed.value });
+  }
+  if (inputError) {
+    if (options.collectErrors) return { error: inputError };
+    return null;
+  }
+
+  if (updates.length || hasOutputOverride) {
+    updates.unshift({ valuePath: row.valuePath, proposedValue });
+  }
+
+  return {
+    ...row,
+    proposedValue,
+    updates: updates.length ? updates : row.updates,
+    reason: hasOutputOverride || updates.length ? 'User-edited ready failed-output value' : row.reason
+  };
+}
+
+function getUnitTestLogReadyApplyRows(review, options = {}) {
+  const collectErrors = options.collectErrors === true;
+  const rows = [];
+  const errors = [];
+  for (const row of review?.rows || []) {
+    const applyRow = buildUnitTestLogReadyApplyRow(row, { collectErrors });
+    if (!applyRow) continue;
+    if (applyRow.error) {
+      errors.push(applyRow.error);
+      continue;
+    }
+    rows.push(applyRow);
+  }
+  return collectErrors ? { rows, errors } : rows;
+}
+
+function hasUnitTestLogManualOverrideText(review) {
+  return (review?.rows || []).some(row => {
+    return !row.canApply
+      && (String(row.manualOverrideText ?? '').trim()
+        || (row.inputCandidates || []).some(input => String(input.manualOverrideText ?? '').trim()));
+  });
+}
+
+function hasUnitTestLogReadyOverrideText(row) {
+  return row?.canApply
+    && (String(row.readyOverrideText ?? '').trim()
+      || (row.inputCandidates || []).some(input => String(input.manualOverrideText ?? '').trim()));
+}
+
 function getUnitTestLogApplyRows(review) {
   if (!review?.rows?.length) return [];
   return [
-    ...review.rows.filter(row => row.canApply),
+    ...getUnitTestLogReadyApplyRows(review),
     ...getUnitTestLogManualOverrideRows(review)
   ];
+}
+
+function rebuildUnitTestLogReviewFromRows(review, rows) {
+  const indexedRows = rows.map((row, index) => ({ ...row, index }));
+  return {
+    ...review,
+    rows: indexedRows,
+    updateCount: indexedRows.filter(row => row.canApply).length,
+    reviewCount: indexedRows.filter(row => !row.canApply).length
+  };
 }
 
 function formatCalcModalContent(content) {
@@ -1943,12 +2162,167 @@ function formatCalcModalContent(content) {
   }
 }
 
+const calcModalSearchState = {
+  query: '',
+  activeIndex: 0
+};
+
+const calcModalDragState = {
+  active: false,
+  pointerId: null,
+  offsetX: 0,
+  offsetY: 0
+};
+
+function getActiveCalcModalContentEl() {
+  return document.querySelector('.calc-modal-content.active');
+}
+
+function setCalcModalContent(element, content) {
+  if (!element) return;
+  const text = content || '';
+  element.dataset.rawContent = text;
+  element.textContent = text;
+}
+
+function getCalcModalSearchMatches(text, query) {
+  if (!query) return [];
+  const normalizedText = String(text || '').toLowerCase();
+  const normalizedQuery = String(query || '').toLowerCase();
+  const matches = [];
+  let index = normalizedText.indexOf(normalizedQuery);
+  while (index !== -1) {
+    matches.push({ index, end: index + query.length });
+    index = normalizedText.indexOf(normalizedQuery, index + Math.max(query.length, 1));
+  }
+  return matches;
+}
+
+function renderCalcModalSearch() {
+  const contentEl = getActiveCalcModalContentEl();
+  const countEl = document.getElementById('calcModalSearchCount');
+  if (!contentEl) return;
+  const rawContent = contentEl.dataset.rawContent || contentEl.textContent || '';
+  const query = calcModalSearchState.query;
+  const matches = getCalcModalSearchMatches(rawContent, query);
+  if (!query || !matches.length) {
+    contentEl.textContent = rawContent;
+    if (countEl) countEl.textContent = query ? '0 matches' : '0 matches';
+    return;
+  }
+  if (calcModalSearchState.activeIndex >= matches.length) calcModalSearchState.activeIndex = 0;
+  if (calcModalSearchState.activeIndex < 0) calcModalSearchState.activeIndex = matches.length - 1;
+  let html = '';
+  let cursor = 0;
+  matches.forEach((match, index) => {
+    html += escapeHtml(rawContent.slice(cursor, match.index));
+    html += `<mark class="calc-modal-search-match ${index === calcModalSearchState.activeIndex ? 'active' : ''}">${escapeHtml(rawContent.slice(match.index, match.end))}</mark>`;
+    cursor = match.end;
+  });
+  html += escapeHtml(rawContent.slice(cursor));
+  contentEl.innerHTML = html;
+  if (countEl) countEl.textContent = `${calcModalSearchState.activeIndex + 1} of ${matches.length}`;
+  contentEl.querySelector('.calc-modal-search-match.active')?.scrollIntoView({ block: 'center', inline: 'nearest' });
+}
+
+function updateCalcModalSearch(query) {
+  calcModalSearchState.query = query || '';
+  calcModalSearchState.activeIndex = 0;
+  renderCalcModalSearch();
+}
+
+function stepCalcModalSearch(delta) {
+  const contentEl = getActiveCalcModalContentEl();
+  const rawContent = contentEl?.dataset.rawContent || '';
+  const matches = getCalcModalSearchMatches(rawContent, calcModalSearchState.query);
+  if (!matches.length) return;
+  calcModalSearchState.activeIndex = (calcModalSearchState.activeIndex + delta + matches.length) % matches.length;
+  renderCalcModalSearch();
+}
+
+function resetCalcModalSearch() {
+  calcModalSearchState.query = '';
+  calcModalSearchState.activeIndex = 0;
+  const input = document.getElementById('calcModalSearchInput');
+  const count = document.getElementById('calcModalSearchCount');
+  if (input) input.value = '';
+  if (count) count.textContent = '0 matches';
+}
+
+function resetCalcModalPosition() {
+  const modal = document.querySelector('.calc-modal');
+  if (!modal) return;
+  modal.style.position = '';
+  modal.style.left = '';
+  modal.style.top = '';
+  modal.style.width = '';
+  modal.classList.remove('dragging');
+  calcModalDragState.active = false;
+  calcModalDragState.pointerId = null;
+}
+
+function clampCalcModalPosition(left, top, modal) {
+  const margin = 8;
+  const rect = modal.getBoundingClientRect();
+  const maxLeft = Math.max(margin, window.innerWidth - rect.width - margin);
+  const maxTop = Math.max(margin, window.innerHeight - rect.height - margin);
+  return {
+    left: Math.min(Math.max(margin, left), maxLeft),
+    top: Math.min(Math.max(margin, top), maxTop)
+  };
+}
+
+function startCalcModalDrag(event) {
+  if (event.button !== undefined && event.button !== 0) return;
+  if (event.target?.closest?.('button, input, textarea, select, a')) return;
+  const modal = event.currentTarget?.closest?.('.calc-modal');
+  if (!modal) return;
+
+  const rect = modal.getBoundingClientRect();
+  modal.style.position = 'fixed';
+  modal.style.width = `${rect.width}px`;
+  modal.style.left = `${rect.left}px`;
+  modal.style.top = `${rect.top}px`;
+  modal.classList.add('dragging');
+
+  calcModalDragState.active = true;
+  calcModalDragState.pointerId = event.pointerId;
+  calcModalDragState.offsetX = event.clientX - rect.left;
+  calcModalDragState.offsetY = event.clientY - rect.top;
+  event.currentTarget.setPointerCapture?.(event.pointerId);
+  event.preventDefault();
+}
+
+function moveCalcModalDrag(event) {
+  if (!calcModalDragState.active || event.pointerId !== calcModalDragState.pointerId) return;
+  const modal = document.querySelector('.calc-modal');
+  if (!modal) return;
+  const nextPosition = clampCalcModalPosition(
+    event.clientX - calcModalDragState.offsetX,
+    event.clientY - calcModalDragState.offsetY,
+    modal
+  );
+  modal.style.left = `${nextPosition.left}px`;
+  modal.style.top = `${nextPosition.top}px`;
+}
+
+function stopCalcModalDrag(event) {
+  if (!calcModalDragState.active || event.pointerId !== calcModalDragState.pointerId) return;
+  const modal = document.querySelector('.calc-modal');
+  modal?.classList.remove('dragging');
+  event.currentTarget?.releasePointerCapture?.(event.pointerId);
+  calcModalDragState.active = false;
+  calcModalDragState.pointerId = null;
+}
+
 function closeCalcModal() {
   const overlay = document.getElementById('calcModalOverlay');
   if (!overlay) return;
   overlay.style.display = 'none';
-  document.getElementById('calcModalCalcContent').textContent = '';
-  document.getElementById('calcModalTestContent').textContent = '';
+  resetCalcModalPosition();
+  setCalcModalContent(document.getElementById('calcModalCalcContent'), '');
+  setCalcModalContent(document.getElementById('calcModalTestContent'), '');
+  resetCalcModalSearch();
   const pathEl = document.getElementById('calcModalPath');
   if (pathEl) {
     pathEl.textContent = '';
@@ -1973,11 +2347,23 @@ function setCalcModalTab(tabKey) {
     pane.classList.toggle('active', isActive);
   });
   if (pathEl) pathEl.textContent = normalizedTabKey === 'calc' ? pathEl.dataset.calcPath || '' : pathEl.dataset.unitTestPath || '';
+  renderCalcModalSearch();
 }
 
 async function openUnitTestReviewFilesModal(calcFilePath, testFilePath) {
   if (!calcFilePath) return showToast('No calc file path is available for this row.', 'error');
   if (!testFilePath) return showToast('No unit test file path is available for this row.', 'error');
+  if (window.api?.openUnitTestReviewWindow) {
+    const result = await window.api.openUnitTestReviewWindow({
+      calcRootPath: appState.filePaths.CALC_ROOT,
+      testRootPath: appState.filePaths.TEST_ROOT,
+      calcFilePath,
+      testFilePath
+    });
+    if (!result.success) return showToast(`Could not open review files: ${result.message}`, 'error');
+    return;
+  }
+
   const overlay = document.getElementById('calcModalOverlay');
   const calcContentEl = document.getElementById('calcModalCalcContent');
   const testContentEl = document.getElementById('calcModalTestContent');
@@ -1985,10 +2371,12 @@ async function openUnitTestReviewFilesModal(calcFilePath, testFilePath) {
   if (!overlay || !calcContentEl || !testContentEl || !pathEl) return;
 
   overlay.style.display = 'flex';
+  resetCalcModalPosition();
   pathEl.dataset.calcPath = calcFilePath;
   pathEl.dataset.unitTestPath = testFilePath;
-  calcContentEl.textContent = 'Loading calc file...';
-  testContentEl.textContent = 'Loading unit test file...';
+  resetCalcModalSearch();
+  setCalcModalContent(calcContentEl, 'Loading calc file...');
+  setCalcModalContent(testContentEl, 'Loading unit test file...');
   setCalcModalTab('calc');
 
   try {
@@ -2001,12 +2389,12 @@ async function openUnitTestReviewFilesModal(calcFilePath, testFilePath) {
     if (!result.success) throw new Error(result.message);
     pathEl.dataset.calcPath = result.calc?.relativePath || result.calc?.filePath || calcFilePath;
     pathEl.dataset.unitTestPath = result.unitTest?.relativePath || result.unitTest?.filePath || testFilePath;
-    calcContentEl.textContent = formatCalcModalContent(result.calc?.content);
-    testContentEl.textContent = formatCalcModalContent(result.unitTest?.content);
+    setCalcModalContent(calcContentEl, formatCalcModalContent(result.calc?.content));
+    setCalcModalContent(testContentEl, formatCalcModalContent(result.unitTest?.content));
     setCalcModalTab('calc');
   } catch (error) {
-    calcContentEl.textContent = '';
-    testContentEl.textContent = '';
+    setCalcModalContent(calcContentEl, '');
+    setCalcModalContent(testContentEl, '');
     closeCalcModal();
     showToast(`Could not open review files: ${error.message}`, 'error');
   }
@@ -2023,6 +2411,7 @@ function buildConstantsMaintenanceReview(readResult, deltaYears) {
       description: entry.description || '',
       currentValue,
       proposedValue,
+      autoOverrideText: entry.autoOverrideText ?? proposedValue,
       currentDataTimeValue: entry.dataTimeValue || `${currentValue}T00:00:00.000Z`,
       proposedDataTimeValue: `${proposedValue}T00:00:00.000Z`,
       deltaYears
@@ -2060,6 +2449,43 @@ function buildConstantsMaintenanceReview(readResult, deltaYears) {
   };
 }
 
+function getConstantsAutoOverrideText(row) {
+  return row?.autoOverrideText ?? row?.proposedValue ?? '';
+}
+
+function hasConstantsAutoOverrideChanged(row) {
+  return String(getConstantsAutoOverrideText(row)) !== String(row?.proposedValue ?? '');
+}
+
+function getConstantsAutoUpdateRows(review, options = {}) {
+  const collectErrors = options.collectErrors === true;
+  const rows = [];
+  const errors = [];
+  for (const row of review?.autoRows || []) {
+    const finalValue = String(getConstantsAutoOverrideText(row)).trim();
+    try {
+      const normalizedValue = shiftDateTimeValueByYears(finalValue, 0);
+      rows.push({
+        ...row,
+        finalValue: normalizedValue,
+        finalDataTimeValue: `${normalizedValue}T00:00:00.000Z`
+      });
+    } catch (error) {
+      if (collectErrors) errors.push(`${row.name || 'Constant'}: ${error.message}`);
+    }
+  }
+  return collectErrors ? { rows, errors } : rows;
+}
+
+function rebuildConstantsMaintenanceReviewFromRows(review, autoRows, manualRows) {
+  return {
+    ...review,
+    autoRows,
+    manualRows,
+    matchedCount: autoRows.length + manualRows.length
+  };
+}
+
 function buildUnitTestDateRollerReview(previewResult) {
   const rows = (previewResult?.rows || []).map((row, index) => ({
     index,
@@ -2074,7 +2500,26 @@ function buildUnitTestDateRollerReview(previewResult) {
     tomType: row.tomType || '',
     currentValue: row.currentValue,
     proposedValue: row.proposedValue,
+    readyOverrideText: row.readyOverrideText ?? formatUnitTestReviewValue(row.proposedValue),
     manualOverrideText: row.manualOverrideText || '',
+    inputCandidates: (row.inputCandidates || []).map(input => ({
+      label: input.label || '',
+      fieldPath: input.fieldPath || '',
+      valuePath: input.valuePath || '',
+      type: input.type || '',
+      tomType: input.tomType || '',
+      currentValue: input.currentValue,
+      manualOverrideText: input.manualOverrideText || ''
+    })),
+    outputCandidate: row.outputCandidate ? {
+      label: row.outputCandidate.label || '',
+      fieldPath: row.outputCandidate.fieldPath || '',
+      valuePath: row.outputCandidate.valuePath || '',
+      type: row.outputCandidate.type || '',
+      tomType: row.outputCandidate.tomType || '',
+      currentValue: row.outputCandidate.currentValue,
+      manualOverrideText: row.outputCandidate.manualOverrideText || ''
+    } : null,
     constantName: row.constantName || '',
     canApply: row.canApply !== false,
     reason: row.reason || ''
@@ -2409,10 +2854,14 @@ function renderMarriageCreditSection() {
         const hasManualRows = rows.some(row => !row.canApply);
         const rowsHtml = rows.map((row, index) => {
           const currentValue = escapeHtml(formatUnitTestReviewValue(row.currentValue));
+          const inputEditClass = row.canApply ? 'unit-test-log-ready-input-value' : 'unit-test-log-manual-input-value';
+          const inputEditHtml = row.inputCandidates?.length
+            ? `<div class="unit-test-log-editor-block"><div class="unit-test-log-editor-title">Inputs</div>${row.inputCandidates.map((input, inputIndex) => `<label class="unit-test-log-input-edit"><span class="unit-test-log-input-label" title="${escapeHtml(input.label || input.fieldPath || `Input ${inputIndex + 1}`)}">${escapeHtml(input.label || input.fieldPath || `Input ${inputIndex + 1}`)}</span><span class="unit-test-log-current-value">${escapeHtml(formatUnitTestReviewValue(input.currentValue))}</span><input class="text-input ${inputEditClass}" data-log-row-index="${row.index}" data-log-input-index="${inputIndex}" value="${escapeHtml(input.manualOverrideText || '')}" placeholder="${escapeHtml(formatUnitTestReviewValue(input.currentValue))}" /></label>`).join('')}</div>`
+            : '';
           const nextValue = row.canApply
-            ? escapeHtml(formatUnitTestReviewValue(row.proposedValue))
+            ? `<div class="unit-test-log-editor-block"><div class="unit-test-log-editor-title">Output</div><input class="text-input unit-test-log-ready-value-input" data-log-row-index="${row.index}" value="${escapeHtml(row.readyOverrideText || '')}" placeholder="${escapeHtml(formatUnitTestReviewValue(row.proposedValue))}" /></div>`
             : row.filePath && row.valuePath
-              ? `<input class="text-input unit-test-log-manual-value-input" data-log-row-index="${row.index}" value="${escapeHtml(row.manualOverrideText || '')}" placeholder="${escapeHtml(formatUnitTestReviewValue(row.currentValue))}" />`
+              ? `<div class="unit-test-log-editor-block"><div class="unit-test-log-editor-title">Output</div><input class="text-input unit-test-log-manual-value-input" data-log-row-index="${row.index}" value="${escapeHtml(row.manualOverrideText || '')}" placeholder="${escapeHtml(formatUnitTestReviewValue(row.currentValue))}" /></div>`
               : '<span class="diff-empty">Needs review</span>';
           const calcButton = row.calcFilePath
             ? `<button class="btn btn-outline btn-sm unit-test-view-calc-btn" type="button" data-calc-file-path="${escapeHtml(row.calcFilePath)}" data-test-file-path="${escapeHtml(row.filePath || '')}">View Calc / Unit Test</button>`
@@ -2421,20 +2870,20 @@ function renderMarriageCreditSection() {
             ? `<div class="unit-test-manual-reason">${escapeHtml(row.reason)}</div>`
             : '';
           const statusHtml = row.canApply
-            ? '<span class="diff-badge badge-ok">Ready</span>'
-            : `<span class="diff-badge badge-warn" title="${escapeHtml(row.reason)}">Manual review</span>${row.manualOverrideText ? '<span class="diff-badge badge-accent unit-test-override-badge">Reviewed</span>' : ''}`;
-          return `<tr><td>${index + 1}</td><td>${escapeHtml(row.caseName || '-')}</td><td>${escapeHtml(row.calcFieldPath || '-')}</td><td>${escapeHtml(row.fieldPath || '-')}</td><td>${currentValue}</td><td>${nextValue}${reasonHtml}</td><td>${calcButton}</td><td>${statusHtml}</td></tr>`;
+            ? `<span class="diff-badge badge-ok">Ready</span>${hasUnitTestLogReadyOverrideText(row) ? '<span class="diff-badge badge-accent unit-test-override-badge">Edited</span>' : ''}`
+            : `<span class="diff-badge badge-warn" title="${escapeHtml(row.reason)}">Manual review</span>${hasUnitTestLogManualOverrideText({ rows: [row] }) ? '<span class="diff-badge badge-accent unit-test-override-badge">Reviewed</span>' : ''}`;
+          return `<tr><td>${index + 1}</td><td>${escapeHtml(row.caseName || '-')}</td><td>${escapeHtml(row.calcFieldPath || '-')}</td><td>${escapeHtml(row.fieldPath || '-')}</td><td>${currentValue}</td><td>${nextValue}${reasonHtml}${inputEditHtml}</td><td>${calcButton}</td><td>${statusHtml}</td></tr>`;
         }).join('');
-        return `<div class="diff-table-wrapper marriage-credit-table-wrapper"><table class="diff-table marriage-credit-table unit-test-review-table"><thead><tr><th>#</th><th>Case</th><th>Output Field</th><th>Field Path</th><th>Current Expected</th><th>${hasManualRows ? 'Reviewed Value' : 'Runtime Actual'}</th><th>Calc</th><th>Status</th></tr></thead><tbody>${rowsHtml}</tbody></table></div>`;
+        return `<div class="diff-table-wrapper marriage-credit-table-wrapper"><table class="diff-table marriage-credit-table unit-test-review-table"><thead><tr><th>#</th><th>Case</th><th>Output Field</th><th>Field Path</th><th>Current Expected</th><th>${hasManualRows ? 'Reviewed Value' : 'Proposed / Reviewed'}</th><th>Calc</th><th>Status</th></tr></thead><tbody>${rowsHtml}</tbody></table></div>`;
       };
       const readyPanelHtml = readyRows.length
-        ? `<div class="diff-panel unit-test-log-review-panel ${activeTab === 'ready' ? 'active' : ''}" id="unit-test-log-panel-ready"><div class="content-section"><div class="section-header"><div><h2 class="section-title">Ready From Log</h2><p class="section-subtitle">${escapeHtml(logReview.logPath || '')}</p></div></div>${renderLogRows(readyRows)}</div></div>`
+        ? `<div class="diff-panel unit-test-log-review-panel ${activeTab === 'ready' ? 'active' : ''}" id="unit-test-log-panel-ready"><div class="content-section"><div class="section-header"><div><h2 class="section-title">Ready From Log</h2><p class="section-subtitle">${escapeHtml(logReview.logPath || '')}</p></div><button class="btn btn-success unit-test-log-apply-ready-btn" type="button" ${readyRows.length ? '' : 'disabled'}>Apply Ready Failed Outputs</button></div>${renderLogRows(readyRows)}</div></div>`
         : '';
       const manualPanelHtml = manualRows.length
-        ? `<div class="diff-panel unit-test-log-review-panel ${activeTab === 'manual' ? 'active' : ''}" id="unit-test-log-panel-manual"><div class="content-section"><div class="section-header"><div><h2 class="section-title">Needs Review From Log</h2><p class="section-subtitle">Review the calc, enter only the values you want to override, then apply failed output updates.</p></div></div>${renderLogRows(manualRows)}</div></div>`
+        ? `<div class="diff-panel unit-test-log-review-panel ${activeTab === 'manual' ? 'active' : ''}" id="unit-test-log-panel-manual"><div class="content-section"><div class="section-header"><div><h2 class="section-title">Needs Review From Log</h2><p class="section-subtitle">Review the calc, enter only the values you want to override, then apply those reviewed failed-output values.</p></div><button class="btn btn-success unit-test-log-apply-manual-btn" type="button" ${hasUnitTestLogManualOverrideText(logReview) ? '' : 'disabled'}>Apply Reviewed Failed Outputs</button></div>${renderLogRows(manualRows)}</div></div>`
         : '';
       container.style.display = 'block';
-      container.innerHTML = `<div class="content-section"><div class="section-header"><div><h2 class="section-title">Review Failed Output Updates</h2><p class="section-subtitle">These rows were parsed from the latest Omnistudio unit-test log. Applying writes ready rows and any reviewed manual values back to output.value fields.</p></div></div><div class="diff-summary"><div class="diff-stat"><span class="diff-stat-value">${logReview.failureCount}</span><span class="diff-stat-label">Log failures</span></div><div class="diff-stat"><span class="diff-stat-value ok">${readyRows.length}</span><span class="diff-stat-label">Ready output updates</span></div><div class="diff-stat"><span class="diff-stat-value ${manualRows.length > 0 ? 'warn' : 'ok'}">${manualRows.length}</span><span class="diff-stat-label">Manual review rows</span></div><div class="diff-stat"><span class="diff-stat-value">${appState.taxYear}</span><span class="diff-stat-label">Tax year</span></div></div>${tabsHtml ? `<div class="diff-tabs unit-test-log-review-tabs">${tabsHtml}</div>` : ''}<div class="diff-panels unit-test-log-review-panels">${readyPanelHtml}${manualPanelHtml}</div></div>`;
+      container.innerHTML = `<div class="content-section"><div class="section-header"><div><h2 class="section-title">Review Failed Output Updates</h2><p class="section-subtitle">These rows were parsed from the latest Omnistudio unit-test log. Use each tab's apply button to update only that group.</p></div></div><div class="diff-summary"><div class="diff-stat"><span class="diff-stat-value">${logReview.failureCount}</span><span class="diff-stat-label">Log failures</span></div><div class="diff-stat"><span class="diff-stat-value ok">${readyRows.length}</span><span class="diff-stat-label">Ready output updates</span></div><div class="diff-stat"><span class="diff-stat-value ${manualRows.length > 0 ? 'warn' : 'ok'}">${manualRows.length}</span><span class="diff-stat-label">Manual review rows</span></div><div class="diff-stat"><span class="diff-stat-value">${appState.taxYear}</span><span class="diff-stat-label">Tax year</span></div></div>${tabsHtml ? `<div class="diff-tabs unit-test-log-review-tabs">${tabsHtml}</div>` : ''}<div class="diff-panels unit-test-log-review-panels">${readyPanelHtml}${manualPanelHtml}</div></div>`;
       container.querySelectorAll('.unit-test-log-review-tab').forEach(tab => tab.addEventListener('click', () => {
         appState.unitTestLogUi.activeTab = tab.dataset.unitTestLogTab;
         renderMarriageCreditSection();
@@ -2443,11 +2892,38 @@ function renderMarriageCreditSection() {
       container.querySelectorAll('.unit-test-view-calc-btn').forEach(button => button.addEventListener('click', () => {
         openUnitTestReviewFilesModal(button.dataset.calcFilePath, button.dataset.testFilePath);
       }));
+      container.querySelectorAll('.unit-test-log-apply-ready-btn').forEach(button => button.addEventListener('click', () => applyUnitTestLogUpdates('ready')));
+      container.querySelectorAll('.unit-test-log-apply-manual-btn').forEach(button => button.addEventListener('click', () => applyUnitTestLogUpdates('manual')));
       container.querySelectorAll('.unit-test-log-manual-value-input').forEach(input => input.addEventListener('input', event => {
         const rowIndex = Number(event.target.dataset.logRowIndex);
         const row = appState.unitTestLogReview?.rows?.find(candidate => candidate.index === rowIndex);
         if (!row) return;
         row.manualOverrideText = event.target.value;
+        updateActionButtons();
+      }));
+      container.querySelectorAll('.unit-test-log-ready-value-input').forEach(input => input.addEventListener('input', event => {
+        const rowIndex = Number(event.target.dataset.logRowIndex);
+        const row = appState.unitTestLogReview?.rows?.find(candidate => candidate.index === rowIndex);
+        if (!row) return;
+        row.readyOverrideText = event.target.value;
+        updateActionButtons();
+      }));
+      container.querySelectorAll('.unit-test-log-manual-input-value').forEach(input => input.addEventListener('input', event => {
+        const rowIndex = Number(event.target.dataset.logRowIndex);
+        const inputIndex = Number(event.target.dataset.logInputIndex);
+        const row = appState.unitTestLogReview?.rows?.find(candidate => candidate.index === rowIndex);
+        const inputCandidate = row?.inputCandidates?.[inputIndex];
+        if (!inputCandidate) return;
+        inputCandidate.manualOverrideText = event.target.value;
+        updateActionButtons();
+      }));
+      container.querySelectorAll('.unit-test-log-ready-input-value').forEach(input => input.addEventListener('input', event => {
+        const rowIndex = Number(event.target.dataset.logRowIndex);
+        const inputIndex = Number(event.target.dataset.logInputIndex);
+        const row = appState.unitTestLogReview?.rows?.find(candidate => candidate.index === rowIndex);
+        const inputCandidate = row?.inputCandidates?.[inputIndex];
+        if (!inputCandidate) return;
+        inputCandidate.manualOverrideText = event.target.value;
         updateActionButtons();
       }));
       syncWideTableScrollbars(container);
@@ -2486,35 +2962,43 @@ function renderMarriageCreditSection() {
         groups.get(key).rows.push(row);
       });
       const groupCardsHtml = Array.from(groups.values()).map((group, groupIndex) => {
-        const hasManualRows = group.rows.some(row => !row.canApply);
         const itemRowsHtml = group.rows.map((row, rowIndex) => {
           const currentValue = escapeHtml(formatUnitTestReviewValue(row.currentValue));
+          const extraInputCandidates = (row.inputCandidates || []).filter(input => input.valuePath !== row.valuePath);
+          const outputCandidate = row.outputCandidate && row.outputCandidate.valuePath !== row.valuePath ? row.outputCandidate : null;
+          const extraInputEditHtml = !row.canApply && extraInputCandidates.length
+            ? `<div class="unit-test-log-editor-block"><div class="unit-test-log-editor-title">Inputs</div>${extraInputCandidates.map((input, inputIndex) => `<label class="unit-test-log-input-edit"><span class="unit-test-log-input-label" title="${escapeHtml(input.label || input.fieldPath || `Input ${inputIndex + 1}`)}">${escapeHtml(input.label || input.fieldPath || `Input ${inputIndex + 1}`)}</span><span class="unit-test-log-current-value">${escapeHtml(formatUnitTestReviewValue(input.currentValue))}</span><input class="text-input unit-test-manual-input-candidate" data-unit-test-row-index="${row.index}" data-unit-test-input-index="${inputIndex}" value="${escapeHtml(input.manualOverrideText || '')}" placeholder="${escapeHtml(formatUnitTestReviewValue(input.currentValue))}" /></label>`).join('')}</div>`
+            : '';
+          const outputEditHtml = !row.canApply && outputCandidate
+            ? `<div class="unit-test-log-editor-block"><div class="unit-test-log-editor-title">Output</div><label class="unit-test-log-input-edit"><span class="unit-test-log-input-label" title="${escapeHtml(outputCandidate.label || outputCandidate.fieldPath || 'Output')}">${escapeHtml(outputCandidate.label || outputCandidate.fieldPath || 'Output')}</span><span class="unit-test-log-current-value">${escapeHtml(formatUnitTestReviewValue(outputCandidate.currentValue))}</span><input class="text-input unit-test-manual-output-candidate" data-unit-test-row-index="${row.index}" value="${escapeHtml(outputCandidate.manualOverrideText || '')}" placeholder="${escapeHtml(formatUnitTestReviewValue(outputCandidate.currentValue))}" /></label></div>`
+            : '';
           const proposedValue = row.canApply
-            ? escapeHtml(formatUnitTestReviewValue(row.proposedValue))
-            : `<input class="text-input unit-test-manual-value-input" data-unit-test-row-index="${row.index}" value="${escapeHtml(row.manualOverrideText || '')}" placeholder="${escapeHtml(formatUnitTestReviewValue(row.currentValue))}" />`;
+            ? `<input class="text-input unit-test-ready-value-input" data-unit-test-row-index="${row.index}" value="${escapeHtml(getUnitTestOverrideText(row))}" placeholder="${escapeHtml(formatUnitTestReviewValue(row.proposedValue))}" />`
+            : `<div class="unit-test-log-editor-block"><div class="unit-test-log-editor-title">${row.rowKind === 'input' ? 'Flagged Input' : 'Flagged Output'}</div><input class="text-input unit-test-manual-value-input" data-unit-test-row-index="${row.index}" value="${escapeHtml(getUnitTestOverrideText(row))}" placeholder="${escapeHtml(formatUnitTestReviewValue(row.currentValue))}" /></div>`;
           const statusHtml = row.canApply
-            ? '<span class="diff-badge badge-ok">Ready</span>'
-            : `<span class="diff-badge badge-warn" title="${escapeHtml(row.reason)}">Manual review</span>${row.manualOverrideText ? '<span class="diff-badge badge-accent unit-test-override-badge">Reviewed</span>' : ''}`;
+            ? `<span class="diff-badge badge-ok">Ready</span>${hasReadyOverrideChanged(row) ? '<span class="diff-badge badge-accent unit-test-override-badge">Edited</span>' : ''}`
+            : `<span class="diff-badge badge-warn" title="${escapeHtml(row.reason)}">Manual review</span>${hasUnitTestManualOverrideText({ manualRows: [row] }) ? '<span class="diff-badge badge-accent unit-test-override-badge">Reviewed</span>' : ''}`;
           const detailHtml = !row.canApply && row.reason
             ? `<div class="unit-test-manual-reason">${escapeHtml(row.reason)}</div>`
             : '';
-          return `<tr><td>${rowIndex + 1}</td><td>${row.rowKind === 'input' ? 'Input' : 'Output'}</td><td>${escapeHtml(row.fieldPath)}</td><td>${escapeHtml(row.constantName || '-')}</td><td>${currentValue}</td><td>${proposedValue}${detailHtml}</td><td>${statusHtml}</td></tr>`;
+          return `<tr><td>${rowIndex + 1}</td><td>${row.rowKind === 'input' ? 'Input' : 'Output'}</td><td>${escapeHtml(row.fieldPath)}</td><td>${escapeHtml(row.constantName || '-')}</td><td>${currentValue}</td><td>${proposedValue}${detailHtml}${extraInputEditHtml}${outputEditHtml}</td><td>${statusHtml}</td></tr>`;
         }).join('');
         const calcFileHtml = group.rows[0]?.calcFilePath ? `<p class="unit-test-review-group-subtitle">Calc File: ${escapeHtml(group.rows[0].calcFilePath)}</p>` : '';
-        const valueHeader = hasManualRows ? 'Reviewed Value' : 'Proposed Value';
         const viewCalcButton = group.rows[0]?.calcFilePath ? `<button class="btn btn-outline btn-sm unit-test-view-calc-btn" type="button" data-calc-file-path="${escapeHtml(group.rows[0].calcFilePath)}" data-test-file-path="${escapeHtml(group.filePath || '')}">View Calc / Unit Test</button>` : '';
-        return `<div class="unit-test-review-group"><div class="unit-test-review-group-header"><div><h3 class="unit-test-review-group-title">Case ${groupIndex + 1}: ${escapeHtml(group.caseName)}</h3><p class="unit-test-review-group-subtitle">Calc Field Path: ${escapeHtml(group.calcFieldPath)}</p>${calcFileHtml}</div><div class="unit-test-review-group-meta">${viewCalcButton}<span class="diff-badge ${group.rows.every(row => row.canApply) ? 'badge-ok' : 'badge-warn'}">${group.rows.length} ${group.rows.length === 1 ? 'row' : 'rows'}</span></div></div><div class="diff-table-wrapper marriage-credit-table-wrapper"><table class="diff-table marriage-credit-table unit-test-review-table"><thead><tr><th>#</th><th>Target</th><th>Field Path</th><th>Constant</th><th>Current Value</th><th>${valueHeader}</th><th>Status</th></tr></thead><tbody>${itemRowsHtml}</tbody></table></div></div>`;
+        return `<div class="unit-test-review-group"><div class="unit-test-review-group-header"><div><h3 class="unit-test-review-group-title">Case ${groupIndex + 1}: ${escapeHtml(group.caseName)}</h3><p class="unit-test-review-group-subtitle">Calc Field Path: ${escapeHtml(group.calcFieldPath)}</p>${calcFileHtml}</div><div class="unit-test-review-group-meta">${viewCalcButton}<span class="diff-badge ${group.rows.every(row => row.canApply) ? 'badge-ok' : 'badge-warn'}">${group.rows.length} ${group.rows.length === 1 ? 'row' : 'rows'}</span></div></div><div class="diff-table-wrapper marriage-credit-table-wrapper"><table class="diff-table marriage-credit-table unit-test-review-table"><thead><tr><th>#</th><th>Target</th><th>Field Path</th><th>Constant</th><th>Current Value</th><th>Reviewed Value</th><th>Status</th></tr></thead><tbody>${itemRowsHtml}</tbody></table></div></div>`;
       }).join('');
       return `<div class="unit-test-review-groups">${groupCardsHtml}</div>`;
     };
+    const readyApplyCount = getUnitTestReadyApplyRows(review).length;
+    const manualApplyCount = getUnitTestManualOverrideRows(review).length;
     const readyPanelHtml = review.readyRows.length > 0
-      ? `<div class="diff-panel unit-test-review-panel ${activeTab === 'ready' ? 'active' : ''}" id="unit-test-panel-ready"><div class="content-section"><div class="section-header"><div><h2 class="section-title">Ready Unit Test Updates</h2><p class="section-subtitle">These rows were resolved from maintained-constant dependencies and can be written back automatically.</p></div></div>${renderUnitTestRows(review.readyRows, 'No unit test rows are ready for automatic update.')}</div></div>`
+      ? `<div class="diff-panel unit-test-review-panel ${activeTab === 'ready' ? 'active' : ''}" id="unit-test-panel-ready"><div class="content-section"><div class="section-header"><div><h2 class="section-title">Ready Unit Test Updates</h2><p class="section-subtitle">These rows were resolved from maintained-constant dependencies and can be written back automatically.</p></div><button class="btn btn-success unit-test-apply-ready-btn" type="button" ${readyApplyCount ? '' : 'disabled'}>Apply Ready Updates</button></div>${renderUnitTestRows(review.readyRows, 'No unit test rows are ready for automatic update.')}</div></div>`
       : '';
     const manualPanelHtml = review.manualRows.length > 0
-      ? `<div class="diff-panel unit-test-review-panel ${activeTab === 'manual' ? 'active' : ''}" id="unit-test-panel-manual"><div class="content-section"><div class="section-header"><div><h2 class="section-title">Unit Tests Needing Manual Review</h2><p class="section-subtitle">Review the calc context, enter only the values you want to override, then apply to write those reviewed values back to the test JSON.</p></div></div>${renderUnitTestRows(review.manualRows, 'No unit test rows need manual review.')}</div></div>`
+      ? `<div class="diff-panel unit-test-review-panel ${activeTab === 'manual' ? 'active' : ''}" id="unit-test-panel-manual"><div class="content-section"><div class="section-header"><div><h2 class="section-title">Unit Tests Needing Manual Review</h2><p class="section-subtitle">Review the calc context, enter only the values you want to override, then apply to write those reviewed values back to the test JSON.</p></div><button class="btn btn-success unit-test-apply-manual-btn" type="button" ${manualApplyCount ? '' : 'disabled'}>Apply Reviewed Manual Values</button></div>${renderUnitTestRows(review.manualRows, 'No unit test rows need manual review.')}</div></div>`
       : '';
     container.style.display = 'block';
-    container.innerHTML = `<div class="content-section"><div class="section-header"><div><h2 class="section-title">Review Unit Test Constant Updates</h2><p class="section-subtitle">These rows were derived from calc files that return, branch to, or compare against maintained constants. Applying will write only the ready rows back into each matching test JSON file.</p></div></div><div class="diff-summary"><div class="diff-stat"><span class="diff-stat-value">${review.calcFileCount}</span><span class="diff-stat-label">Calc files scanned</span></div><div class="diff-stat"><span class="diff-stat-value">${review.fileCount}</span><span class="diff-stat-label">Matched test files</span></div><div class="diff-stat"><span class="diff-stat-value">${review.caseCount}</span><span class="diff-stat-label">Impacted cases</span></div><div class="diff-stat"><span class="diff-stat-value ${review.updateCount > 0 ? 'ok' : 'ok'}">${review.updateCount}</span><span class="diff-stat-label">Ready updates</span></div><div class="diff-stat"><span class="diff-stat-value ${review.reviewCount > 0 ? 'warn' : 'ok'}">${review.reviewCount}</span><span class="diff-stat-label">Manual review rows</span></div></div>${tabsHtml ? `<div class="diff-tabs unit-test-review-tabs">${tabsHtml}</div>` : ''}<div class="diff-panels unit-test-review-panels">${readyPanelHtml}${manualPanelHtml}</div></div>`;
+    container.innerHTML = `<div class="content-section"><div class="section-header"><div><h2 class="section-title">Review Unit Test Constant Updates</h2><p class="section-subtitle">These rows were derived from calc files that return, branch to, or compare against maintained constants. Use each tab's apply button to update only that group.</p></div></div><div class="diff-summary"><div class="diff-stat"><span class="diff-stat-value">${review.calcFileCount}</span><span class="diff-stat-label">Calc files scanned</span></div><div class="diff-stat"><span class="diff-stat-value">${review.fileCount}</span><span class="diff-stat-label">Matched test files</span></div><div class="diff-stat"><span class="diff-stat-value">${review.caseCount}</span><span class="diff-stat-label">Impacted cases</span></div><div class="diff-stat"><span class="diff-stat-value ${review.updateCount > 0 ? 'ok' : 'ok'}">${review.updateCount}</span><span class="diff-stat-label">Ready updates</span></div><div class="diff-stat"><span class="diff-stat-value ${review.reviewCount > 0 ? 'warn' : 'ok'}">${review.reviewCount}</span><span class="diff-stat-label">Manual review rows</span></div></div>${tabsHtml ? `<div class="diff-tabs unit-test-review-tabs">${tabsHtml}</div>` : ''}<div class="diff-panels unit-test-review-panels">${readyPanelHtml}${manualPanelHtml}</div></div>`;
     container.querySelectorAll('.unit-test-review-tab').forEach(tab => tab.addEventListener('click', () => {
       appState.unitTestDateRollerUi.activeTab = tab.dataset.unitTestTab;
       renderMarriageCreditSection();
@@ -2522,6 +3006,21 @@ function renderMarriageCreditSection() {
     }));
     container.querySelectorAll('.unit-test-view-calc-btn').forEach(button => button.addEventListener('click', () => {
       openUnitTestReviewFilesModal(button.dataset.calcFilePath, button.dataset.testFilePath);
+    }));
+    container.querySelectorAll('.unit-test-apply-ready-btn').forEach(button => button.addEventListener('click', () => {
+      applyUnitTestDateRoller('ready');
+    }));
+    container.querySelectorAll('.unit-test-apply-manual-btn').forEach(button => button.addEventListener('click', () => {
+      applyUnitTestDateRoller('manual');
+    }));
+    container.querySelectorAll('.unit-test-ready-value-input').forEach(input => input.addEventListener('input', event => {
+      const rowIndex = Number(event.target.dataset.unitTestRowIndex);
+      const row = appState.unitTestDateRollerReview?.rows?.find(candidate => candidate.index === rowIndex);
+      if (!row) return;
+      row.readyOverrideText = event.target.value;
+      const readyRow = appState.unitTestDateRollerReview?.readyRows?.find(candidate => candidate.index === rowIndex);
+      if (readyRow) readyRow.readyOverrideText = event.target.value;
+      updateActionButtons();
     }));
     container.querySelectorAll('.unit-test-manual-value-input').forEach(input => input.addEventListener('input', event => {
       const rowIndex = Number(event.target.dataset.unitTestRowIndex);
@@ -2532,6 +3031,31 @@ function renderMarriageCreditSection() {
       if (manualRow) manualRow.manualOverrideText = event.target.value;
       updateActionButtons();
     }));
+    container.querySelectorAll('.unit-test-manual-input-candidate').forEach(input => input.addEventListener('input', event => {
+      const rowIndex = Number(event.target.dataset.unitTestRowIndex);
+      const inputIndex = Number(event.target.dataset.unitTestInputIndex);
+      const setInputOverride = row => {
+        const editableInputs = (row?.inputCandidates || []).filter(candidate => candidate.valuePath !== row.valuePath);
+        const inputCandidate = editableInputs[inputIndex];
+        if (inputCandidate) inputCandidate.manualOverrideText = event.target.value;
+      };
+      const row = appState.unitTestDateRollerReview?.rows?.find(candidate => candidate.index === rowIndex);
+      const manualRow = appState.unitTestDateRollerReview?.manualRows?.find(candidate => candidate.index === rowIndex);
+      setInputOverride(row);
+      setInputOverride(manualRow);
+      updateActionButtons();
+    }));
+    container.querySelectorAll('.unit-test-manual-output-candidate').forEach(input => input.addEventListener('input', event => {
+      const rowIndex = Number(event.target.dataset.unitTestRowIndex);
+      const setOutputOverride = row => {
+        if (row?.outputCandidate) row.outputCandidate.manualOverrideText = event.target.value;
+      };
+      const row = appState.unitTestDateRollerReview?.rows?.find(candidate => candidate.index === rowIndex);
+      const manualRow = appState.unitTestDateRollerReview?.manualRows?.find(candidate => candidate.index === rowIndex);
+      setOutputOverride(row);
+      setOutputOverride(manualRow);
+      updateActionButtons();
+    }));
     syncWideTableScrollbars(container);
     return;
   }
@@ -2540,8 +3064,8 @@ function renderMarriageCreditSection() {
     ensureConstantsMaintenanceUiState();
     const review = appState.constantsMaintenanceReview;
     if (!review?.autoRows?.length && !review?.manualRows?.length) { container.style.display = 'none'; container.innerHTML = ''; return; }
-    const autoRowsHtml = review.autoRows.map((row, index) => `<tr><td>${index + 1}</td><td>${row.name}</td><td>${row.currentValue}</td><td>${row.proposedValue}</td></tr>`).join('');
-    const manualRowsHtml = review.manualRows.map((row, index) => `<tr><td>${index + 1}</td><td>${row.name}</td><td>${row.description || '-'}</td><td>${row.baseType || '-'}</td><td>${row.currentValue}</td><td>${row.suggestedValue || '<span class="diff-empty">Needs manual review</span>'}</td><td><input class="text-input constants-manual-input" data-constant-index="${row.index}" value="${String(row.finalValue).replace(/"/g, '&quot;')}" /></td></tr>`).join('');
+    const autoRowsHtml = review.autoRows.map((row, index) => `<tr><td>${index + 1}</td><td>${escapeHtml(row.name)}</td><td>${escapeHtml(row.currentValue)}</td><td>${escapeHtml(row.proposedValue)}</td><td><input class="text-input constants-auto-input" data-constant-index="${row.index}" value="${escapeHtml(getConstantsAutoOverrideText(row))}" placeholder="${escapeHtml(row.proposedValue)}" /></td><td>${hasConstantsAutoOverrideChanged(row) ? '<span class="status-badge badge-accent">Edited</span>' : '<span class="status-badge badge-ok">Ready</span>'}</td></tr>`).join('');
+    const manualRowsHtml = review.manualRows.map((row, index) => `<tr><td>${index + 1}</td><td>${escapeHtml(row.name)}</td><td>${escapeHtml(row.description || '-')}</td><td>${escapeHtml(row.baseType || '-')}</td><td>${escapeHtml(row.currentValue)}</td><td>${row.suggestedValue ? escapeHtml(row.suggestedValue) : '<span class="diff-empty">Needs manual review</span>'}</td><td><input class="text-input constants-manual-input" data-constant-index="${row.index}" value="${escapeHtml(row.finalValue)}" /></td></tr>`).join('');
     const tabs = [
       { key: 'auto', label: 'Auto Date Updates', badge: review.autoRows.length },
       { key: 'manual', label: 'Suggested Manual Updates', badge: review.manualRows.length }
@@ -2552,7 +3076,7 @@ function renderMarriageCreditSection() {
     appState.constantsMaintenanceUi.activeTab = activeTab;
     const tabsHtml = tabs.map(tab => `<button class="diff-tab constants-review-tab ${activeTab === tab.key ? 'active' : ''}" data-constants-tab="${tab.key}">${tab.label}<span class="diff-badge badge-ok">${tab.badge}</span></button>`).join('');
     const autoPanelHtml = review.autoRows.length > 0
-      ? `<div class="diff-panel constants-review-panel ${activeTab === 'auto' ? 'active' : ''}" id="constants-panel-auto"><div class="content-section"><div class="section-header"><div><h2 class="section-title">Review Automatic Date Updates</h2><p class="section-subtitle">These Year Over Year DateTime constants will be shifted automatically by ${review.deltaYears > 0 ? '+1' : '-1'} year.</p></div></div><div class="diff-table-wrapper marriage-credit-table-wrapper"><table class="diff-table marriage-credit-table"><thead><tr><th>#</th><th>Name</th><th>Current Value</th><th>Proposed Value</th></tr></thead><tbody>${autoRowsHtml}</tbody></table></div></div></div>`
+      ? `<div class="diff-panel constants-review-panel ${activeTab === 'auto' ? 'active' : ''}" id="constants-panel-auto"><div class="content-section"><div class="section-header"><div><h2 class="section-title">Review Automatic Date Updates</h2><p class="section-subtitle">These Year Over Year DateTime constants will be shifted by ${review.deltaYears > 0 ? '+1' : '-1'} year unless you override the reviewed value.</p></div></div><div class="diff-table-wrapper marriage-credit-table-wrapper"><table class="diff-table marriage-credit-table"><thead><tr><th>#</th><th>Name</th><th>Current Value</th><th>Proposed Value</th><th>Reviewed Value</th><th>Status</th></tr></thead><tbody>${autoRowsHtml}</tbody></table></div></div></div>`
       : '';
     const manualPanelHtml = review.manualRows.length > 0
       ? `<div class="diff-panel constants-review-panel ${activeTab === 'manual' ? 'active' : ''}" id="constants-panel-manual"><div class="content-section"><div class="section-header"><div><h2 class="section-title">Review Suggested Manual Updates</h2><p class="section-subtitle">These Year Over Year constants are not DateTime values. Review the suggested values, use the description for context, and edit them before applying.</p></div></div>${review.manualRows.length === 0 ? '<div class="diff-empty">No manual year-over-year constants were found.</div>' : `<div class="diff-table-wrapper marriage-credit-table-wrapper"><table class="diff-table marriage-credit-table"><thead><tr><th>#</th><th>Name</th><th>Description</th><th>BaseType</th><th>Current Value</th><th>Suggested Value</th><th>Final Value</th></tr></thead><tbody>${manualRowsHtml}</tbody></table></div>`}</div></div>`
@@ -2564,6 +3088,12 @@ function renderMarriageCreditSection() {
       renderWorkflowText();
       renderMarriageCreditSection();
       updateActionButtons();
+    }));
+    container.querySelectorAll('.constants-auto-input').forEach(input => input.addEventListener('input', event => {
+      const targetIndex = Number(event.target.dataset.constantIndex);
+      const row = appState.constantsMaintenanceReview?.autoRows?.find(candidate => candidate.index === targetIndex);
+      if (!row) return;
+      row.autoOverrideText = event.target.value;
     }));
     container.querySelectorAll('.constants-manual-input').forEach(input => input.addEventListener('input', event => {
       const targetIndex = Number(event.target.dataset.constantIndex);
@@ -2664,17 +3194,34 @@ async function updateJsonFiles() {
 ${results.filter(r => !r.success).map(f => `${f.statusKey}: ${f.message}`).join('\n')}`, 'error');
 }
 
-async function applyUnitTestDateRoller() {
+async function applyUnitTestDateRoller(mode = 'all') {
   const rootPath = appState.filePaths.TEST_ROOT;
   const calcRootPath = appState.filePaths.CALC_ROOT;
   const constantsPath = appState.filePaths.CONSTS;
   const review = appState.unitTestDateRollerReview;
-  const maxApplyPasses = 5;
+  const maxApplyPasses = mode === 'manual' ? 1 : 5;
   if (!rootPath || !calcRootPath || !constantsPath) return showToast('Please configure the unit test root, calc root, and constants path before applying updates.', 'error');
   if (!review?.rows?.length) return showToast('Please preview the unit test updates first.', 'error');
   const manualOverrides = getUnitTestManualOverrideRows(review, { collectErrors: true });
-  if (manualOverrides.errors.length) return showToast(`Manual review value needs attention:\n${manualOverrides.errors[0]}`, 'error');
-  if (!getUnitTestDateRollerApplyRows(review).length) return showToast('There are no unit test rows eligible for update. Enter a reviewed value on the manual tab or re-preview.', 'error');
+  const readyOverrides = getUnitTestReadyApplyRows(review, { collectErrors: true });
+  if (mode !== 'ready' && manualOverrides.errors.length) return showToast(`Manual review value needs attention:\n${manualOverrides.errors[0]}`, 'error');
+  if (mode !== 'manual' && readyOverrides.errors.length) return showToast(`Ready value override needs attention:\n${readyOverrides.errors[0]}`, 'error');
+  const getApplyRowsForMode = currentReview => {
+    if (mode === 'ready') return currentReview === review ? readyOverrides.rows : getUnitTestReadyApplyRows(currentReview);
+    if (mode === 'manual') return currentReview === review ? manualOverrides.rows : [];
+    return currentReview === review
+      ? [...readyOverrides.rows, ...manualOverrides.rows]
+      : getUnitTestDateRollerApplyRows(currentReview);
+  };
+  const initialApplyRows = getApplyRowsForMode(review);
+  if (!initialApplyRows.length) {
+    const message = mode === 'ready'
+      ? 'There are no ready unit test rows to apply.'
+      : mode === 'manual'
+        ? 'Enter a reviewed value on the manual tab before applying manual updates.'
+        : 'There are no unit test rows eligible for update. Enter a reviewed value on the manual tab or re-preview.';
+    return showToast(message, 'error');
+  }
 
   setUpdating(true);
   let currentReview = review;
@@ -2683,24 +3230,20 @@ async function applyUnitTestDateRoller() {
   const updatedFilePaths = new Set();
   const updatedValuePaths = new Set();
   const getRowUpdateKey = row => `${row.filePath || ''}::${row.valuePath || ''}`;
-  const suppressPreviouslyAppliedRows = nextReview => {
-    const rows = nextReview.rows.filter(row => !updatedValuePaths.has(getRowUpdateKey(row)));
-    const readyRows = rows.filter(row => row.canApply);
-    const manualRows = rows.filter(row => !row.canApply);
-    const uniqueCases = new Set(rows.map(row => `${row.filePath}::${row.caseName}`));
-    return {
-      ...nextReview,
-      rows,
-      readyRows,
-      manualRows,
-      caseCount: uniqueCases.size,
-      updateCount: readyRows.length,
-      reviewCount: manualRows.length
-    };
+  const suppressPreviouslyAppliedRows = (nextReview, previousReview) => {
+    const refreshedRows = nextReview.rows.filter(row => !updatedValuePaths.has(getRowUpdateKey(row)));
+    if (mode === 'ready') {
+      const preservedManualKeys = new Set((previousReview?.manualRows || []).map(row => getRowUpdateKey(row)));
+      const readyRows = refreshedRows.filter(row => row.canApply && !preservedManualKeys.has(getRowUpdateKey(row)));
+      const preservedManualRows = (previousReview?.manualRows || [])
+        .filter(row => !updatedValuePaths.has(getRowUpdateKey(row)));
+      return rebuildUnitTestDateRollerReviewFromRows(nextReview, [...readyRows, ...preservedManualRows]);
+    }
+    return rebuildUnitTestDateRollerReviewFromRows(nextReview, refreshedRows);
   };
 
   for (let passIndex = 0; passIndex < maxApplyPasses; passIndex++) {
-    const readyRows = getUnitTestDateRollerApplyRows(currentReview).filter(row => !updatedValuePaths.has(getRowUpdateKey(row)));
+    const readyRows = getApplyRowsForMode(currentReview).filter(row => !updatedValuePaths.has(getRowUpdateKey(row)));
     if (!readyRows.length) {
       break;
     }
@@ -2712,6 +3255,7 @@ async function applyUnitTestDateRoller() {
         filePath: row.filePath,
         valuePath: row.valuePath,
         proposedValue: row.proposedValue,
+        updates: row.updates,
         canApply: true
       }))
     });
@@ -2735,7 +3279,7 @@ async function applyUnitTestDateRoller() {
       return showToast(`Unit test update succeeded, but refresh failed: ${refreshed.message}`, 'error');
     }
 
-    currentReview = suppressPreviouslyAppliedRows(buildUnitTestDateRollerReview(refreshed));
+    currentReview = suppressPreviouslyAppliedRows(buildUnitTestDateRollerReview(refreshed), currentReview);
   }
 
   setUpdating(false);
@@ -2744,10 +3288,11 @@ async function applyUnitTestDateRoller() {
   renderExtractedDataSection();
   renderMarriageCreditSection();
   updateActionButtons();
-  if (getUnitTestDateRollerApplyRows(currentReview).some(row => !updatedValuePaths.has(getRowUpdateKey(row)))) {
+  if (mode !== 'manual' && getApplyRowsForMode(currentReview).some(row => !updatedValuePaths.has(getRowUpdateKey(row)))) {
     return showToast(`Updated ${updatedValueCount} unit test values across ${updatedFilePaths.size} files. Additional ready updates remain after ${applyPassCount} passes; review before applying again.`, 'error');
   }
-  showToast(`Updated ${updatedValueCount} unit test values across ${updatedFilePaths.size} files${applyPassCount > 1 ? ` in ${applyPassCount} passes` : ''}.`, 'success');
+  const updateLabel = mode === 'manual' ? 'reviewed manual unit test values' : 'unit test values';
+  showToast(`Updated ${updatedValueCount} ${updateLabel} across ${updatedFilePaths.size} files${applyPassCount > 1 ? ` in ${applyPassCount} passes` : ''}.`, 'success');
 }
 
 function buildUnitTestLogReview(result) {
@@ -2764,7 +3309,17 @@ function buildUnitTestLogReview(result) {
     tomType: row.tomType || '',
     currentValue: row.currentValue,
     proposedValue: row.proposedValue,
+    readyOverrideText: row.readyOverrideText || '',
     manualOverrideText: row.manualOverrideText || '',
+    inputCandidates: (row.inputCandidates || []).map(input => ({
+      label: input.label || '',
+      fieldPath: input.fieldPath || '',
+      valuePath: input.valuePath || '',
+      type: input.type || '',
+      tomType: input.tomType || '',
+      currentValue: input.currentValue,
+      manualOverrideText: input.manualOverrideText || ''
+    })),
     constantName: row.constantName || 'Runtime actual from unit test log',
     canApply: row.canApply === true,
     reason: row.reason || ''
@@ -2806,29 +3361,48 @@ async function previewUnitTestLogUpdates() {
   }
 }
 
-async function applyUnitTestLogUpdates() {
+async function applyUnitTestLogUpdates(mode = 'all') {
   const review = appState.unitTestLogReview;
   if (!review?.rows?.length) return showToast('Please preview failed output updates first.', 'error');
+  const readyOverrides = getUnitTestLogReadyApplyRows(review, { collectErrors: true });
   const manualOverrides = getUnitTestLogManualOverrideRows(review, { collectErrors: true });
-  if (manualOverrides.errors.length) return showToast(`Manual failed-output value needs attention:\n${manualOverrides.errors[0]}`, 'error');
-  const applyRows = getUnitTestLogApplyRows(review);
-  if (!applyRows.length) return showToast('There are no failed-output rows eligible for update. Enter a reviewed value or re-preview.', 'error');
+  if (mode !== 'manual' && readyOverrides.errors.length) return showToast(`Ready failed-output value needs attention:\n${readyOverrides.errors[0]}`, 'error');
+  if (mode !== 'ready' && manualOverrides.errors.length) return showToast(`Manual failed-output value needs attention:\n${manualOverrides.errors[0]}`, 'error');
+  const applyRows = mode === 'ready'
+    ? readyOverrides.rows
+    : mode === 'manual'
+      ? manualOverrides.rows
+      : [...readyOverrides.rows, ...manualOverrides.rows];
+  if (!applyRows.length) {
+    const message = mode === 'ready'
+      ? 'There are no ready failed-output rows to apply.'
+      : mode === 'manual'
+        ? 'Enter a reviewed value on the failed-output manual tab before applying.'
+        : 'There are no failed-output rows eligible for update. Enter a reviewed value or re-preview.';
+    return showToast(message, 'error');
+  }
   setUpdating(true);
   const result = await window.api.applyUnitTestLogUpdates({
     rows: applyRows.map(row => ({
       filePath: row.filePath,
       valuePath: row.valuePath,
       proposedValue: row.proposedValue,
+      updates: row.updates,
       canApply: true
     }))
   });
   setUpdating(false);
   if (!result.success) return showToast(`Failed output update failed: ${result.message}`, 'error');
-  appState.unitTestLogReview = null;
+  const appliedKeys = new Set(applyRows.map(row => `${row.filePath || ''}::${row.valuePath || ''}`));
+  const remainingRows = review.rows.filter(row => !appliedKeys.has(`${row.filePath || ''}::${row.valuePath || ''}`));
+  appState.unitTestLogReview = remainingRows.length
+    ? rebuildUnitTestLogReviewFromRows(review, remainingRows)
+    : null;
   renderExtractedDataSection();
   renderMarriageCreditSection();
   updateActionButtons();
-  showToast(`Updated ${result.updatedValueCount} expected output values across ${result.updatedFileCount} files.`, 'success');
+  const updateLabel = mode === 'manual' ? 'reviewed failed-output values' : 'failed-output values';
+  showToast(`Updated ${result.updatedValueCount} ${updateLabel} across ${result.updatedFileCount} files.`, 'success');
 }
 
 async function applyConstantsMaintenanceYearShift() {
@@ -2862,9 +3436,18 @@ async function applyConstantsMaintenanceYearShift() {
   }
 
   if (!review.autoRows.length) return showToast('There are no automatic DateTime year shifts to apply for this file.', 'error');
+  const autoUpdates = getConstantsAutoUpdateRows(review, { collectErrors: true });
+  if (autoUpdates.errors.length) return showToast(`Automatic DateTime value needs attention:\n${autoUpdates.errors[0]}`, 'error');
 
   setUpdating(true);
-  const result = await window.api.applyConstantsYearShift({ filePath, deltaYears: appState.constantsShiftDeltaYears });
+  const result = await window.api.applyConstantsYearShift({
+    filePath,
+    deltaYears: appState.constantsShiftDeltaYears,
+    updates: autoUpdates.rows.map(row => ({
+      index: row.index,
+      finalValue: row.finalValue
+    }))
+  });
   setUpdating(false);
 
   if (!result.success) return showToast(`Constants update failed: ${result.message}`, 'error');
@@ -2872,13 +3455,14 @@ async function applyConstantsMaintenanceYearShift() {
   const refreshed = await window.api.readConstantsMaintenanceFile(filePath);
   if (!refreshed.success) return showToast(`Constants update succeeded, but refresh failed: ${refreshed.message}`, 'error');
 
-  appState.constantsMaintenanceReview = buildConstantsMaintenanceReview(refreshed, appState.constantsShiftDeltaYears);
-  appState.constantsMaintenanceUi.activeTab = review.manualRows.length > 0 ? 'auto' : getDefaultConstantsTab(appState.constantsMaintenanceReview);
+  const refreshedReview = buildConstantsMaintenanceReview(refreshed, appState.constantsShiftDeltaYears);
+  appState.constantsMaintenanceReview = rebuildConstantsMaintenanceReviewFromRows(refreshedReview, [], review.manualRows || []);
+  appState.constantsMaintenanceUi.activeTab = getDefaultConstantsTab(appState.constantsMaintenanceReview);
   renderWorkflowText();
   renderExtractedDataSection();
   renderMarriageCreditSection();
   updateActionButtons();
-  showToast(`Updated ${result.updatedCount} automatic DateTime constants by ${appState.constantsShiftDeltaYears > 0 ? '+1' : '-1'} year.`, 'success');
+  showToast(`Updated ${result.updatedCount} automatic DateTime constants.`, 'success');
 }
 
 async function replaceCoFamilyAffordabilityJson() {
@@ -3038,6 +3622,8 @@ function setUpdating(active) {
   document.getElementById('updateJsonBtn').disabled = active;
   const applyUnitTestLogBtn = document.getElementById('applyUnitTestLogBtn');
   if (applyUnitTestLogBtn) applyUnitTestLogBtn.disabled = active;
+  document.querySelectorAll?.('.unit-test-apply-ready-btn, .unit-test-apply-manual-btn')
+    .forEach(button => { button.disabled = active; });
   document.getElementById('updateJsonBtn').textContent = getUpdateButtonText(active);
 }
 
@@ -3069,7 +3655,18 @@ function updateActionButtons() {
   const previewUnitTestLogBtn = document.getElementById('previewUnitTestLogBtn');
   if (previewUnitTestLogBtn) previewUnitTestLogBtn.disabled = !isUnitTestDateRollerWorkflow() || !appState.filePaths.TEST_ROOT;
   const applyUnitTestLogBtn = document.getElementById('applyUnitTestLogBtn');
-  if (applyUnitTestLogBtn) applyUnitTestLogBtn.disabled = !isUnitTestDateRollerWorkflow() || !getUnitTestLogApplyRows(appState.unitTestLogReview).length;
+  if (applyUnitTestLogBtn) {
+    applyUnitTestLogBtn.style.display = 'none';
+    applyUnitTestLogBtn.disabled = true;
+  }
+  document.querySelectorAll?.('.unit-test-log-apply-ready-btn')
+    .forEach(button => { button.disabled = !isUnitTestDateRollerWorkflow() || !getUnitTestLogReadyApplyRows(appState.unitTestLogReview).length; });
+  document.querySelectorAll?.('.unit-test-log-apply-manual-btn')
+    .forEach(button => { button.disabled = !isUnitTestDateRollerWorkflow() || !hasUnitTestLogManualOverrideText(appState.unitTestLogReview); });
+  document.querySelectorAll?.('.unit-test-apply-ready-btn')
+    .forEach(button => { button.disabled = !isUnitTestDateRollerWorkflow() || !getUnitTestReadyApplyRows(appState.unitTestDateRollerReview).length; });
+  document.querySelectorAll?.('.unit-test-apply-manual-btn')
+    .forEach(button => { button.disabled = !isUnitTestDateRollerWorkflow() || !hasUnitTestManualOverrideText(appState.unitTestDateRollerReview); });
 }
 let toastTimeout;
 function clearToast() {
@@ -3135,6 +3732,13 @@ function bindEvents() {
   if (applyUnitTestLogBtn) applyUnitTestLogBtn.addEventListener('click', applyUnitTestLogUpdates);
   const calcModalCloseBtn = document.getElementById('calcModalCloseBtn');
   if (calcModalCloseBtn) calcModalCloseBtn.addEventListener('click', closeCalcModal);
+  const calcModalHeader = document.querySelector('.calc-modal-header');
+  if (calcModalHeader) {
+    calcModalHeader.addEventListener('pointerdown', startCalcModalDrag);
+    calcModalHeader.addEventListener('pointermove', moveCalcModalDrag);
+    calcModalHeader.addEventListener('pointerup', stopCalcModalDrag);
+    calcModalHeader.addEventListener('pointercancel', stopCalcModalDrag);
+  }
   document.querySelectorAll('.calc-modal-tab').forEach(tab => {
     tab.addEventListener('click', () => setCalcModalTab(tab.dataset.calcModalTab));
   });
@@ -3142,8 +3746,27 @@ function bindEvents() {
   if (calcModalOverlay) calcModalOverlay.addEventListener('click', event => {
     if (event.target === calcModalOverlay) closeCalcModal();
   });
+  const calcModalSearchInput = document.getElementById('calcModalSearchInput');
+  if (calcModalSearchInput) {
+    calcModalSearchInput.addEventListener('input', event => updateCalcModalSearch(event.target.value));
+    calcModalSearchInput.addEventListener('keydown', event => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      stepCalcModalSearch(event.shiftKey ? -1 : 1);
+    });
+  }
+  const calcModalSearchPrevBtn = document.getElementById('calcModalSearchPrevBtn');
+  if (calcModalSearchPrevBtn) calcModalSearchPrevBtn.addEventListener('click', () => stepCalcModalSearch(-1));
+  const calcModalSearchNextBtn = document.getElementById('calcModalSearchNextBtn');
+  if (calcModalSearchNextBtn) calcModalSearchNextBtn.addEventListener('click', () => stepCalcModalSearch(1));
   document.addEventListener('keydown', event => {
+    const calcModalIsOpen = Boolean(calcModalOverlay && calcModalOverlay.style.display !== 'none');
     if (event.key === 'Escape') closeCalcModal();
+    if (calcModalIsOpen && event.key.toLowerCase() === 'f' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      calcModalSearchInput?.focus();
+      calcModalSearchInput?.select();
+    }
   });
 }
 

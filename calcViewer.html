@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Calc / Unit Test JSON</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="viewer-body">
+  <main class="viewer-shell">
+    <header class="viewer-header">
+      <div>
+        <h1 class="section-title">Calc / Unit Test JSON</h1>
+        <p id="viewerPath" class="section-subtitle"></p>
+      </div>
+    </header>
+
+    <div class="calc-modal-tabs viewer-tabs" role="tablist" aria-label="Review file viewer">
+      <button id="viewerCalcTab" class="diff-tab calc-modal-tab active" type="button" role="tab" aria-selected="true" data-viewer-tab="calc">Calc JSON</button>
+      <button id="viewerTestTab" class="diff-tab calc-modal-tab" type="button" role="tab" aria-selected="false" data-viewer-tab="unitTest">Unit Test JSON</button>
+    </div>
+
+    <div class="calc-modal-search viewer-search">
+      <input id="viewerSearchInput" class="text-input calc-modal-search-input" type="search" placeholder="Find in current file" autocomplete="off" />
+      <span id="viewerSearchCount" class="calc-modal-search-count">0 matches</span>
+      <button id="viewerSearchPrevBtn" class="btn btn-outline btn-sm" type="button">Previous</button>
+      <button id="viewerSearchNextBtn" class="btn btn-outline btn-sm" type="button">Next</button>
+    </div>
+
+    <section class="viewer-content-shell">
+      <pre id="viewerCalcContent" class="calc-modal-content viewer-content calc-modal-pane active" role="tabpanel">Loading calc file...</pre>
+      <pre id="viewerTestContent" class="calc-modal-content viewer-content calc-modal-pane" role="tabpanel">Loading unit test file...</pre>
+    </section>
+  </main>
+
+  <script src="calcViewer.js"></script>
+</body>
+</html>

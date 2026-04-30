@@ -25,6 +25,11 @@ contextBridge.exposeInMainWorld('api', {
   applyConstantsManualUpdates: (payload) => ipcRenderer.invoke('apply-constants-manual-updates', payload),
   readUnitTestCalcFile: (payload) => ipcRenderer.invoke('read-unit-test-calc-file', payload),
   readUnitTestReviewFiles: (payload) => ipcRenderer.invoke('read-unit-test-review-files', payload),
+  openUnitTestReviewWindow: (payload) => ipcRenderer.invoke('open-unit-test-review-window', payload),
+  onUnitTestReviewFilesLoaded: (callback) => {
+    ipcRenderer.removeAllListeners('unit-test-review-files-loaded');
+    ipcRenderer.on('unit-test-review-files-loaded', (event, result) => callback(result));
+  },
   previewUnitTestDateRoll: (payload) => ipcRenderer.invoke('preview-unit-test-date-roll', payload),
   applyUnitTestDateRoll: (payload) => ipcRenderer.invoke('apply-unit-test-date-roll', payload),
   previewUnitTestLogUpdates: (payload) => ipcRenderer.invoke('preview-unit-test-log-updates', payload),

@@ -98,6 +98,117 @@ test('Unit test date roller: previews constant-driven DateTime[] unit test updat
   assert.equal(preview.rows[0].canApply, true);
 });
 
+test('Unit test date roller: evaluates ternary date variables returned from maintained boundaries', () => {
+  const calcJson = {
+    Entity: 'CA',
+    Form: 'ReturnInformation.EFItems.PrimarySignature',
+    Field: 'SignatureDate',
+    Type: 'DateTime',
+    TomType: 'Date',
+    Dependencies: [
+      { FieldType: 'Calculated', Entity: 'CA', Form: 'ReturnInformation.EFItems.PrimarySignature', Field: 'PIN', FieldRef: 'CA/ReturnInformation.EFItems.PrimarySignature/PIN' },
+      { FieldType: 'Constant', FieldRef: 'CA/Constant/FirstDayNextYear', Constant: 'FirstDayNextYear' },
+      { FieldType: 'Calculated', Entity: 'CA', Form: 'Form8879', Field: 'TaxPayer.SignatureDate', FieldRef: 'CA/Form8879/TaxPayer.SignatureDate' },
+      { FieldType: 'Input', Entity: 'FD', Form: 'ReturnInformation.EFItems', Field: 'TaxPayer.PinSignatureDate', FieldRef: 'FD/ReturnInformation.EFItems/TaxPayer.PinSignatureDate' }
+    ],
+    Custom: [
+      'var dateF8879 = {2}.IsOnOrBefore({1})? {1} : {2};',
+      'var datePin = {3}.IsOnOrBefore({1})? {1} : {3};',
+      'if({0} != null)',
+      '{',
+      '    if ({2} != null)',
+      '        return dateF8879;',
+      '    return datePin;',
+      '}',
+      'return null;'
+    ]
+  };
+  const testJson = [
+    {
+      name: 'F8879Before',
+      inputs: [
+        { entity: 'CA', form: 'ReturnInformation.EFItems.PrimarySignature', field: 'PIN', type: 'string', tomType: 'String', value: '12345' },
+        { entity: 'CA', form: 'Form8879', field: 'TaxPayer.SignatureDate', type: 'DateTime', tomType: 'Date', value: '2025-11-17' },
+        { entity: 'FD', form: 'ReturnInformation.EFItems', field: 'TaxPayer.PinSignatureDate', type: 'DateTime', tomType: 'Date', value: null }
+      ],
+      output: {
+        entity: 'CA',
+        form: 'ReturnInformation.EFItems.PrimarySignature',
+        field: 'SignatureDate',
+        type: 'DateTime',
+        tomType: 'Date',
+        value: '2026-01-01'
+      }
+    },
+    {
+      name: 'F8879After',
+      inputs: [
+        { entity: 'CA', form: 'ReturnInformation.EFItems.PrimarySignature', field: 'PIN', type: 'string', tomType: 'String', value: '12345' },
+        { entity: 'CA', form: 'Form8879', field: 'TaxPayer.SignatureDate', type: 'DateTime', tomType: 'Date', value: '2026-11-17' },
+        { entity: 'FD', form: 'ReturnInformation.EFItems', field: 'TaxPayer.PinSignatureDate', type: 'DateTime', tomType: 'Date', value: null }
+      ],
+      output: {
+        entity: 'CA',
+        form: 'ReturnInformation.EFItems.PrimarySignature',
+        field: 'SignatureDate',
+        type: 'DateTime',
+        tomType: 'Date',
+        value: '2026-11-17'
+      }
+    },
+    {
+      name: 'PinBefore',
+      inputs: [
+        { entity: 'CA', form: 'ReturnInformation.EFItems.PrimarySignature', field: 'PIN', type: 'string', tomType: 'String', value: '12345' },
+        { entity: 'CA', form: 'Form8879', field: 'TaxPayer.SignatureDate', type: 'DateTime', tomType: 'Date', value: null },
+        { entity: 'FD', form: 'ReturnInformation.EFItems', field: 'TaxPayer.PinSignatureDate', type: 'DateTime', tomType: 'Date', value: '2025-11-17' }
+      ],
+      output: {
+        entity: 'CA',
+        form: 'ReturnInformation.EFItems.PrimarySignature',
+        field: 'SignatureDate',
+        type: 'DateTime',
+        tomType: 'Date',
+        value: '2026-01-01'
+      }
+    }
+  ];
+
+  const preview = buildPreviewRows({
+    calcJson,
+    testJson,
+    calcFilePath: 'C:\\TaxEngine\\OCE-Regulatory-2025\\Source\\CA\\Calc\\ReturnInformation.EFItems.PrimarySignature\\SignatureDate.calc.json',
+    testFilePath: 'C:\\TaxEngine\\OCE-Regulatory-2025\\Source\\CA\\Tests\\Unit\\Calc\\ReturnInformation.EFItems.PrimarySignature\\SignatureDate.test.json',
+    constantsByName: {
+      FirstDayNextYear: '2027-01-01'
+    }
+  });
+
+  assert.equal(preview.rows.length, 6);
+  assert.equal(preview.rows[0].caseName, 'F8879Before');
+  assert.equal(preview.rows[0].rowKind, 'input');
+  assert.equal(preview.rows[1].constantName, 'FirstDayNextYear');
+  assert.equal(preview.rows[0].currentValue, '2025-11-17');
+  assert.equal(preview.rows[0].proposedValue, '2026-11-17');
+  assert.equal(preview.rows[1].rowKind, 'output');
+  assert.equal(preview.rows[1].currentValue, '2026-01-01');
+  assert.equal(preview.rows[1].proposedValue, '2027-01-01');
+  assert.equal(preview.rows[2].caseName, 'F8879After');
+  assert.equal(preview.rows[2].rowKind, 'input');
+  assert.equal(preview.rows[2].currentValue, '2026-11-17');
+  assert.equal(preview.rows[2].proposedValue, '2027-11-17');
+  assert.equal(preview.rows[3].rowKind, 'output');
+  assert.equal(preview.rows[3].currentValue, '2026-11-17');
+  assert.equal(preview.rows[3].proposedValue, '2027-11-17');
+  assert.equal(preview.rows[4].caseName, 'PinBefore');
+  assert.equal(preview.rows[4].rowKind, 'input');
+  assert.equal(preview.rows[4].currentValue, '2025-11-17');
+  assert.equal(preview.rows[4].proposedValue, '2026-11-17');
+  assert.equal(preview.rows[5].rowKind, 'output');
+  assert.equal(preview.rows[5].currentValue, '2026-01-01');
+  assert.equal(preview.rows[5].proposedValue, '2027-01-01');
+});
+
 test('Unit test date roller: updates Year tomType string outputs with numeric year values', () => {
   const calcJson = {
     Entity: 'FD',
@@ -1309,6 +1420,79 @@ test('Unit test date roller: previews input boundary updates for direct YOY cons
   assert.equal(preview.rows[5].proposedValue, '2026-08-20');
 });
 
+test('Unit test date roller: previews date boundary updates through local date aliases', () => {
+  const preview = buildPreviewRows({
+    calcJson: {
+      Entity: 'CA',
+      Form: 'Form5805.UnderPayReCalc.PartIIPenalty.TaxPaidPeriod',
+      Field: 'FirstPeriodDaysLate.QuarterOne',
+      Type: 'decimal[]',
+      TomType: 'USAmount',
+      Dependencies: [
+        {
+          Entity: 'CA',
+          Form: 'Form5805.UnderPayReCalc.PartIIPenalty.TaxPaidPeriod',
+          Field: 'DatePaid',
+          Type: 'DateTime[]',
+          TomType: 'Date',
+          FieldType: 'Linked',
+          FieldRef: 'CA/Form5805.UnderPayReCalc.PartIIPenalty.TaxPaidPeriod/DatePaid'
+        },
+        { FieldType: 'Constant', FieldRef: 'CA/Constant/Q1EstimateDate', Constant: 'Q1EstimateDate' },
+        { FieldType: 'Constant', FieldRef: 'CA/Constant/LastDayOfYear', Constant: 'LastDayOfYear' }
+      ],
+      Custom: [
+        'var startDate = {1};',
+        'var endDate = {2};',
+        'var paidDate = {0};',
+        '',
+        'if (paidDate.IsOnOrBefore(startDate)) return 0;',
+        'if (paidDate.IsOnOrBefore(endDate))',
+        '    return Calc.DaysBetween(startDate, paidDate);',
+        'return Calc.DaysBetween(startDate, endDate);'
+      ]
+    },
+    testJson: [
+      {
+        name: 2,
+        inputs: [
+          {
+            entity: 'CA',
+            form: 'Form5805.UnderPayReCalc.PartIIPenalty.TaxPaidPeriod',
+            field: 'DatePaid',
+            type: 'DateTime[]',
+            tomType: 'Date',
+            value: ['2025-07-09']
+          }
+        ],
+        output: {
+          entity: 'CA',
+          form: 'Form5805.UnderPayReCalc.PartIIPenalty.TaxPaidPeriod',
+          field: 'FirstPeriodDaysLate.QuarterOne',
+          type: 'decimal[]',
+          tomType: 'USAmount',
+          value: [85.0]
+        }
+      }
+    ],
+    calcFilePath: 'FirstPeriodDaysLate.QuarterOne.calc.json',
+    testFilePath: 'FirstPeriodDaysLate.QuarterOne.test.json',
+    constantsByName: {
+      Q1EstimateDate: '2026-04-15',
+      LastDayOfYear: '2026-12-31'
+    }
+  });
+
+  assert.equal(preview.rows.length, 1);
+  assert.equal(preview.rows[0].rowKind, 'input');
+  assert.equal(preview.rows[0].calcFieldPath, 'CA/Form5805.UnderPayReCalc.PartIIPenalty.TaxPaidPeriod/FirstPeriodDaysLate.QuarterOne');
+  assert.equal(preview.rows[0].constantName, 'Q1EstimateDate');
+  assert.equal(preview.rows[0].fieldPath, '0.inputs.0');
+  assert.equal(preview.rows[0].valuePath, '0.inputs.0.value');
+  assert.deepEqual(preview.rows[0].proposedValue, ['2026-07-09']);
+  assert.equal(preview.rows[0].canApply, true);
+});
+
 test('Unit test date roller: preserves ISO date-time suffixes for between-boundary input returns', () => {
   const preview = buildPreviewRows({
     calcJson: {
@@ -1960,6 +2144,361 @@ test('Unit test date roller: shape-preserving bool[][] updates fill every matrix
   assert.deepEqual(derived.proposedValue, [[true]]);
 });
 
+test('Unit test date roller: shape-preserving bool[][][] updates fill every cube cell', () => {
+  const derived = deriveProposedValue({
+    type: 'bool[][][]',
+    tomType: 'Boolean',
+    value: [[[false]]]
+  }, true);
+
+  assert.equal(derived.supported, true);
+  assert.deepEqual(derived.proposedValue, [[[true]]]);
+});
+
+test('Unit test date roller: shape-preserving decimal[][] updates fill every matrix cell', () => {
+  const zeroDerived = deriveProposedValue({
+    type: 'decimal[][]',
+    tomType: 'Ratio',
+    value: [[0]]
+  }, 0);
+  const fractionalDerived = deriveProposedValue({
+    type: 'decimal[][]',
+    tomType: 'Ratio',
+    value: [[0.14]]
+  }, 0.14);
+
+  assert.equal(zeroDerived.supported, true);
+  assert.deepEqual(zeroDerived.proposedValue, [[0]]);
+  assert.equal(fractionalDerived.supported, true);
+  assert.deepEqual(fractionalDerived.proposedValue, [[0.14]]);
+});
+
+test('Unit test date roller: previews enum string matrix outputs from maintained date branches', () => {
+  const preview = buildPreviewRows({
+    calcJson: {
+      Entity: 'FD',
+      Form: 'Form4684.FedDclrDsstrLossElect',
+      Field: 'DisasterDesc',
+      Type: 'string[][]',
+      TomType: 'String',
+      Dependencies: [
+        { FieldType: 'Constant', FieldRef: 'FD/Constant/FirstDayOfNextYear', Constant: 'FirstDayOfNextYear' },
+        { FieldType: 'Constant', FieldRef: 'FD/Constant/NextyearLastDay', Constant: 'NextyearLastDay' }
+      ],
+      Custom: [
+        'if ({0}.IsOnOrBefore({1}))',
+        '{',
+        '    return DisasterDescription.CCC;',
+        '}',
+        'return null;'
+      ]
+    },
+    testJson: [
+      {
+        name: 'T1',
+        output: {
+          entity: 'FD',
+          form: 'Form4684.FedDclrDsstrLossElect',
+          field: 'DisasterDesc',
+          type: 'string[][]',
+          tomType: 'String',
+          value: [['DDD']]
+        }
+      }
+    ],
+    calcFilePath: 'DisasterDesc.calc.json',
+    testFilePath: 'DisasterDesc.test.json',
+    constantsByName: {
+      FirstDayOfNextYear: '2026-01-01',
+      NextyearLastDay: '2026-12-31'
+    }
+  });
+
+  assert.equal(preview.rows.length, 1);
+  assert.equal(preview.rows[0].constantName, 'FirstDayOfNextYear, NextyearLastDay');
+  assert.deepEqual(preview.rows[0].proposedValue, [['CCC']]);
+  assert.equal(preview.rows[0].canApply, true);
+});
+
+test('Unit test date roller: previews bool[][][] outputs from maintained date branches', () => {
+  const preview = buildPreviewRows({
+    calcJson: {
+      Entity: 'FD',
+      Form: 'Form4684.FedDclrDsstrLossElect.USAddress',
+      Field: 'USAddressPrint',
+      Type: 'bool[][][]',
+      TomType: 'Boolean',
+      Dependencies: [
+        { FieldType: 'Constant', FieldRef: 'FD/Constant/FirstDayOfNextYear', Constant: 'FirstDayOfNextYear' },
+        { FieldType: 'Constant', FieldRef: 'FD/Constant/NextyearLastDay', Constant: 'NextyearLastDay' }
+      ],
+      Custom: [
+        'if ({0}.IsOnOrBefore({1}))',
+        '{',
+        '    return true;',
+        '}',
+        'return false;'
+      ]
+    },
+    testJson: [
+      {
+        name: 'T1',
+        output: {
+          entity: 'FD',
+          form: 'Form4684.FedDclrDsstrLossElect.USAddress',
+          field: 'USAddressPrint',
+          type: 'bool[][][]',
+          tomType: 'Boolean',
+          value: [[[false]]]
+        }
+      }
+    ],
+    calcFilePath: 'USAddressPrint.calc.json',
+    testFilePath: 'USAddressPrint.test.json',
+    constantsByName: {
+      FirstDayOfNextYear: '2026-01-01',
+      NextyearLastDay: '2026-12-31'
+    }
+  });
+
+  assert.equal(preview.rows.length, 1);
+  assert.equal(preview.rows[0].constantName, 'FirstDayOfNextYear, NextyearLastDay');
+  assert.deepEqual(preview.rows[0].proposedValue, [[[true]]]);
+  assert.equal(preview.rows[0].canApply, true);
+});
+
+test('Unit test date roller: maps computed boolean outputs onto X/Blank checkbox arrays', () => {
+  const preview = buildPreviewRows({
+    calcJson: {
+      Entity: 'FD',
+      Form: 'Form8839.AdoptedChild',
+      Field: 'AdoptionFinalInd',
+      Type: 'bool[]',
+      TomType: 'Boolean',
+      Dependencies: [
+        { Entity: 'FD', Form: 'Form8839.AdoptedChild', Field: 'AdoptionFinalDate', Type: 'DateTime', TomType: 'Date', FieldType: 'Input', FieldRef: 'FD/Form8839.AdoptedChild/AdoptionFinalDate' },
+        { FieldType: 'Constant', FieldRef: 'FD/Constant/NextYearNumber', Constant: 'NextYearNumber' }
+      ],
+      Custom: [
+        'return DateTimeCalcHelpers.YYYY({0}) == {1};'
+      ]
+    },
+    testJson: [
+      {
+        name: 'AdptFinalTest3',
+        inputs: [
+          {
+            entity: 'FD',
+            form: 'Form8839.AdoptedChild',
+            field: 'AdoptionFinalDate',
+            type: 'DateTime',
+            tomType: 'Date',
+            value: '2025-12-31'
+          }
+        ],
+        output: {
+          entity: 'FD',
+          form: 'Form8839.AdoptedChild',
+          field: 'AdoptionFinalInd',
+          type: 'bool[]',
+          tomType: 'Boolean',
+          value: ['X']
+        }
+      }
+    ],
+    calcFilePath: 'AdoptionFinalInd.calc.json',
+    testFilePath: 'AdoptionFinalInd.test.json',
+    constantsByName: {
+      NextYearNumber: 2026
+    }
+  });
+
+  assert.equal(preview.rows.length, 1);
+  assert.equal(preview.rows[0].constantName, 'NextYearNumber');
+  assert.deepEqual(preview.rows[0].proposedValue, ['Blank']);
+  assert.equal(preview.rows[0].canApply, true);
+});
+
+test('Unit test date roller: skips X/Blank checkbox arrays when computed boolean output already matches', () => {
+  const preview = buildPreviewRows({
+    calcJson: {
+      Entity: 'FD',
+      Form: 'Form8839.AdoptedChild',
+      Field: 'AdoptionFinalInd',
+      Type: 'bool[]',
+      TomType: 'Boolean',
+      Dependencies: [
+        { Entity: 'FD', Form: 'Form8839.AdoptedChild', Field: 'AdoptionFinalDate', Type: 'DateTime', TomType: 'Date', FieldType: 'Input', FieldRef: 'FD/Form8839.AdoptedChild/AdoptionFinalDate' },
+        { FieldType: 'Constant', FieldRef: 'FD/Constant/NextYearNumber', Constant: 'NextYearNumber' }
+      ],
+      Custom: [
+        'return DateTimeCalcHelpers.YYYY({0}) == {1};'
+      ]
+    },
+    testJson: [
+      {
+        name: 'AdptFinalTest3',
+        inputs: [
+          {
+            entity: 'FD',
+            form: 'Form8839.AdoptedChild',
+            field: 'AdoptionFinalDate',
+            type: 'DateTime',
+            tomType: 'Date',
+            value: '2025-12-31'
+          }
+        ],
+        output: {
+          entity: 'FD',
+          form: 'Form8839.AdoptedChild',
+          field: 'AdoptionFinalInd',
+          type: 'bool[]',
+          tomType: 'Boolean',
+          value: ['Blank']
+        }
+      }
+    ],
+    calcFilePath: 'AdoptionFinalInd.calc.json',
+    testFilePath: 'AdoptionFinalInd.test.json',
+    constantsByName: {
+      NextYearNumber: 2026
+    }
+  });
+
+  assert.equal(preview.rows.length, 0);
+});
+
+test('Unit test date roller: skips unsupported boolean outputs when the selected value already matches', () => {
+  const preview = buildPreviewRows({
+    calcJson: {
+      Entity: 'FD',
+      Form: 'Form1040',
+      Field: 'AmendedReturnInd',
+      Type: 'bool',
+      TomType: 'Boolean',
+      Dependencies: [
+        { FieldType: 'Constant', FieldRef: 'FD/Constant/Form1040FilingDueDate', Constant: 'Form1040FilingDueDate' }
+      ],
+      Custom: [
+        'return {0};'
+      ]
+    },
+    testJson: [
+      {
+        name: 'TR2',
+        output: {
+          entity: 'FD',
+          form: 'Form1040',
+          field: 'AmendedReturnInd',
+          type: 'bool',
+          tomType: 'Boolean',
+          value: 'X'
+        }
+      }
+    ],
+    calcFilePath: 'AmendedReturnInd.calc.json',
+    testFilePath: 'AmendedReturnInd.test.json',
+    constantsByName: {
+      Form1040FilingDueDate: 'X'
+    }
+  });
+
+  assert.equal(preview.rows.length, 0);
+});
+
+test('Unit test date roller: skips nullable unsupported boolean outputs when a sibling also expects null', () => {
+  const preview = buildPreviewRows({
+    calcJson: {
+      Entity: 'VA',
+      Form: 'AgeDeductionWkst',
+      Field: 'Spouse.AgeDedQualifies',
+      Type: 'bool',
+      TomType: 'Boolean',
+      Dependencies: [
+        { FieldType: 'Constant', FieldRef: 'VA/Constant/AgeDedFullDeductionDate', Constant: 'AgeDedFullDeductionDate' }
+      ],
+      Custom: [
+        'return {0};'
+      ]
+    },
+    testJson: [
+      {
+        name: 'One',
+        output: {
+          entity: 'VA',
+          form: 'AgeDeductionWkst',
+          field: 'Spouse.AgeDedQualifies',
+          type: 'bool',
+          tomType: 'Boolean',
+          value: null
+        }
+      },
+      {
+        name: 'Two',
+        output: {
+          entity: 'VA',
+          form: 'AgeDeductionWkst',
+          field: 'Spouse.AgeDedQualifies',
+          type: 'bool',
+          tomType: 'Boolean',
+          value: null
+        }
+      }
+    ],
+    calcFilePath: 'Spouse.AgeDedQualifies.calc.json',
+    testFilePath: 'Spouse.AgeDedQualifies.test.json',
+    constantsByName: {
+      AgeDedFullDeductionDate: '2026-01-01'
+    }
+  });
+
+  assert.equal(preview.rows.length, 0);
+});
+
+test('Unit test date roller: skips unsupported custom matrix outputs when the selected value already matches', () => {
+  const preview = buildPreviewRows({
+    calcJson: {
+      Entity: 'FD',
+      Form: 'Form4547DirectInput.Dependents',
+      Field: 'TrumpAccountStatus',
+      Type: 'Form4547Status[][]',
+      TomType: 'Form4547Status',
+      Dependencies: [
+        { FieldType: 'Constant', FieldRef: 'FD/Constant/BirthYear', Constant: 'BirthYear' },
+        { FieldType: 'Constant', FieldRef: 'FD/Constant/NextYear', Constant: 'NextYear' }
+      ],
+      Custom: [
+        'if ({0} < {1})',
+        '{',
+        '    return Form4547Status.QualifiesAndPilotProgram;',
+        '}',
+        'return Form4547Status.Qualifies;'
+      ]
+    },
+    testJson: [
+      {
+        name: 'DependentAgeNegativeDoesNotQualify',
+        output: {
+          entity: 'FD',
+          form: 'Form4547DirectInput.Dependents',
+          field: 'TrumpAccountStatus',
+          type: 'Form4547Status[][]',
+          tomType: 'Form4547Status',
+          value: [['QualifiesAndPilotProgram']]
+        }
+      }
+    ],
+    calcFilePath: 'TrumpAccountStatus.calc.json',
+    testFilePath: 'TrumpAccountStatus.test.json',
+    constantsByName: {
+      BirthYear: 2025,
+      NextYear: 2026
+    }
+  });
+
+  assert.equal(preview.rows.length, 0);
+});
+
 test('Unit test date roller: previews computed bool[][] outputs from maintained TaxYear comparisons', () => {
   const preview = buildPreviewRows({
     calcJson: {
@@ -2082,6 +2621,71 @@ test('Unit test date roller: flags multi-value DateTime[] replacements for manua
 
   assert.equal(derived.supported, false);
   assert.match(derived.reason, /Scalar constant cannot safely replace/);
+});
+
+test('Unit test date roller: manual review rows expose same-case input and output edits', () => {
+  const testJson = [
+    {
+      name: 'manual',
+      inputs: [
+        {
+          entity: 'OH',
+          form: 'FormA',
+          field: 'PaymentDate',
+          type: 'DateTime',
+          tomType: 'Date',
+          value: '2025-04-15'
+        }
+      ],
+      output: {
+        entity: 'OH',
+        form: 'FormA',
+        field: 'FieldA',
+        type: 'DateTime[]',
+        tomType: 'Date',
+        value: ['2025-09-15', '2025-12-15']
+      }
+    }
+  ];
+  const preview = buildPreviewRows({
+    calcJson: {
+      Entity: 'OH',
+      Form: 'FormA',
+      Field: 'FieldA',
+      Type: 'DateTime[]',
+      TomType: 'Date',
+      Dependencies: [
+        { FieldType: 'Constant', FieldRef: 'OH/Constant/DateA', Constant: 'DateA' }
+      ],
+      Custom: [
+        'return {0};'
+      ]
+    },
+    testJson,
+    calcFilePath: 'FieldA.calc.json',
+    testFilePath: 'FieldA.test.json',
+    constantsByName: {
+      DateA: '2026-09-15'
+    }
+  });
+
+  assert.equal(preview.rows.length, 1);
+  assert.equal(preview.rows[0].canApply, false);
+  assert.equal(preview.rows[0].inputCandidates.length, 1);
+  assert.equal(preview.rows[0].inputCandidates[0].valuePath, '0.inputs.0.value');
+  assert.equal(preview.rows[0].outputCandidate.valuePath, '0.output.value');
+
+  applyPreviewRows(testJson, [{
+    ...preview.rows[0],
+    canApply: true,
+    updates: [
+      { valuePath: preview.rows[0].inputCandidates[0].valuePath, proposedValue: '2026-04-15' },
+      { valuePath: preview.rows[0].outputCandidate.valuePath, proposedValue: ['2026-09-15', '2026-12-15'] }
+    ]
+  }]);
+
+  assert.equal(testJson[0].inputs[0].value, '2026-04-15');
+  assert.deepEqual(testJson[0].output.value, ['2026-09-15', '2026-12-15']);
 });
 
 test('Unit test date roller: applies only ready preview rows back to the parsed JSON', () => {

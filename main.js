@@ -9,6 +9,7 @@ const { parseRelaxedJson } = require('./relaxedJson');
 const { buildConstantsByName } = require('./constantsByName');
 
 let mainWindow;
+const reviewViewerWindows = new Set();
 
 function getConfigPath(filename) {
   return path.join(app.getPath('userData'), filename);
@@ -30,6 +31,45 @@ function createWindow() {
   });
 
   mainWindow.loadFile('index.html');
+}
+
+async function readUnitTestReviewFilesPayload(payload) {
+  const readRootedFile = async ({ rootPath, filePath, extensionPattern, rootLabel, extensionLabel }) => {
+    const resolvedRootPath = path.resolve(rootPath || '');
+    const resolvedFilePath = path.resolve(filePath || '');
+    const relativePath = path.relative(resolvedRootPath, resolvedFilePath);
+    if (!rootPath || !filePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+      throw new Error(`${rootLabel} file must be inside the selected ${rootLabel.toLowerCase()} root folder.`);
+    }
+    if (!extensionPattern.test(resolvedFilePath)) {
+      throw new Error(`Only ${extensionLabel} files can be opened from this view.`);
+    }
+    const raw = await fs.readFile(resolvedFilePath, 'utf-8');
+    return {
+      filePath: resolvedFilePath,
+      relativePath,
+      content: raw
+    };
+  };
+
+  const [calc, unitTest] = await Promise.all([
+    readRootedFile({
+      rootPath: payload?.calcRootPath,
+      filePath: payload?.calcFilePath,
+      extensionPattern: /\.calc\.json$/i,
+      rootLabel: 'Calc',
+      extensionLabel: '.calc.json'
+    }),
+    readRootedFile({
+      rootPath: payload?.testRootPath,
+      filePath: payload?.testFilePath,
+      extensionPattern: /\.test\.json$/i,
+      rootLabel: 'Unit test',
+      extensionLabel: '.test.json'
+    })
+  ]);
+
+  return { success: true, calc, unitTest };
 }
 
 app.whenReady().then(createWindow);
@@ -128,42 +168,34 @@ ipcMain.handle('read-unit-test-calc-file', async (event, payload) => {
 
 ipcMain.handle('read-unit-test-review-files', async (event, payload) => {
   try {
-    const readRootedFile = async ({ rootPath, filePath, extensionPattern, rootLabel, extensionLabel }) => {
-      const resolvedRootPath = path.resolve(rootPath || '');
-      const resolvedFilePath = path.resolve(filePath || '');
-      const relativePath = path.relative(resolvedRootPath, resolvedFilePath);
-      if (!rootPath || !filePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
-        throw new Error(`${rootLabel} file must be inside the selected ${rootLabel.toLowerCase()} root folder.`);
-      }
-      if (!extensionPattern.test(resolvedFilePath)) {
-        throw new Error(`Only ${extensionLabel} files can be opened from this view.`);
-      }
-      const raw = await fs.readFile(resolvedFilePath, 'utf-8');
-      return {
-        filePath: resolvedFilePath,
-        relativePath,
-        content: raw
-      };
-    };
+    return await readUnitTestReviewFilesPayload(payload);
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+});
 
-    const [calc, unitTest] = await Promise.all([
-      readRootedFile({
-        rootPath: payload?.calcRootPath,
-        filePath: payload?.calcFilePath,
-        extensionPattern: /\.calc\.json$/i,
-        rootLabel: 'Calc',
-        extensionLabel: '.calc.json'
-      }),
-      readRootedFile({
-        rootPath: payload?.testRootPath,
-        filePath: payload?.testFilePath,
-        extensionPattern: /\.test\.json$/i,
-        rootLabel: 'Unit test',
-        extensionLabel: '.test.json'
-      })
-    ]);
+ipcMain.handle('open-unit-test-review-window', async (event, payload) => {
+  try {
+    const result = await readUnitTestReviewFilesPayload(payload);
+    const viewerWindow = new BrowserWindow({
+      width: 1100,
+      height: 780,
+      minWidth: 780,
+      minHeight: 520,
+      title: 'Calc / Unit Test JSON',
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        preload: path.join(__dirname, 'preload.js')
+      },
+      icon: path.join(__dirname, 'assets', 'icon.png')
+    });
 
-    return { success: true, calc, unitTest };
+    reviewViewerWindows.add(viewerWindow);
+    viewerWindow.on('closed', () => reviewViewerWindows.delete(viewerWindow));
+    await viewerWindow.loadFile('calcViewer.html');
+    viewerWindow.webContents.send('unit-test-review-files-loaded', result);
+    return { success: true };
   } catch (error) {
     return { success: false, message: error.message };
   }
@@ -321,6 +353,35 @@ ipcMain.handle('apply-constants-year-shift', async (event, payload) => {
 
     const raw = await fs.readFile(payload.filePath, 'utf-8');
     const data = JSON.parse(raw);
+    if (!Array.isArray(data.Constants)) {
+      throw new Error('Invalid JSON structure: missing Constants array');
+    }
+
+    if (Array.isArray(payload?.updates) && payload.updates.length > 0) {
+      let updatedCount = 0;
+      for (const update of payload.updates) {
+        const index = Number(update?.index);
+        if (!Number.isInteger(index) || index < 0 || index >= data.Constants.length) {
+          throw new Error(`Invalid constant index: ${update?.index}`);
+        }
+        const constant = data.Constants[index];
+        if (constant?.Maintenance !== 'Year Over Year' || constant?.BaseType !== 'DateTime') {
+          throw new Error(`Constant at index ${index} is not a Year Over Year DateTime constant.`);
+        }
+        const finalValue = shiftIsoDateByYears(String(update.finalValue || '').trim(), 0);
+        constant.Value = finalValue;
+        constant.DataTimeValue = `${finalValue}T00:00:00.000Z`;
+        updatedCount += 1;
+      }
+
+      await fs.writeFile(payload.filePath, JSON.stringify(data, null, 2), 'utf-8');
+
+      return {
+        success: true,
+        updatedCount
+      };
+    }
+
     const matches = getYearOverYearDateTimeConstants(data.Constants);
 
     for (const match of matches) {
@@ -517,7 +578,7 @@ ipcMain.handle('apply-unit-test-date-roll', async (event, payload) => {
         applyPreviewRows(parsed, rows);
         await fs.writeFile(filePath, serializeTestJson(parsed), 'utf-8');
         updatedFileCount++;
-        updatedValueCount += rows.length;
+        updatedValueCount += rows.reduce((total, row) => total + (Array.isArray(row.updates) && row.updates.length ? row.updates.length : 1), 0);
       } catch (error) {
         throw new Error(`Failed to update ${filePath}: ${error.message}`);
       }
