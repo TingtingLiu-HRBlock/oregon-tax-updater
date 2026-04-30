@@ -2499,6 +2499,128 @@ test('Unit test date roller: skips unsupported custom matrix outputs when the se
   assert.equal(preview.rows.length, 0);
 });
 
+test('Unit test date roller: skips unsupported custom matrix outputs when no concrete output value can be proposed', () => {
+  const preview = buildPreviewRows({
+    calcJson: {
+      Entity: 'FD',
+      Form: 'Form4547DirectInput.Dependents',
+      Field: 'TrumpAccountStatus',
+      Type: 'Form4547Status[][]',
+      TomType: 'Form4547Status',
+      Dependencies: [
+        { FieldType: 'Constant', FieldRef: 'FD/Constant/BirthYear', Constant: 'BirthYear' },
+        { FieldType: 'Constant', FieldRef: 'FD/Constant/NextYear', Constant: 'NextYear' }
+      ],
+      Custom: [
+        'if ({0} > {1})',
+        '{',
+        '    return Form4547Status.DoesNotQualify;',
+        '}',
+        'return Form4547Status.Qualifies;'
+      ]
+    },
+    testJson: [
+      {
+        name: 'QualifyNoSeed',
+        output: {
+          entity: 'FD',
+          form: 'Form4547DirectInput.Dependents',
+          field: 'TrumpAccountStatus',
+          type: 'Form4547Status[][]',
+          tomType: 'Form4547Status',
+          value: [['Qualifies']]
+        }
+      }
+    ],
+    calcFilePath: 'TrumpAccountStatus.calc.json',
+    testFilePath: 'TrumpAccountStatus.test.json',
+    constantsByName: {
+      BirthYear: 2026,
+      NextYear: 2027
+    }
+  });
+
+  assert.equal(preview.rows.length, 0);
+});
+
+test('Unit test date roller: skips output rows when selected constant cannot produce a concrete string matrix value', () => {
+  const preview = buildPreviewRows({
+    calcJson: {
+      Entity: 'FD',
+      Form: 'Form4684.FedDclrDsstrLossElect',
+      Field: 'DisasterDesc',
+      Type: 'string[][]',
+      TomType: 'String',
+      Dependencies: [
+        { FieldType: 'Constant', FieldRef: 'FD/Constant/FirstDayOfNextYear', Constant: 'FirstDayOfNextYear' },
+        { FieldType: 'Constant', FieldRef: 'FD/Constant/NextyearLastDay', Constant: 'NextyearLastDay' }
+      ],
+      Custom: [
+        'return {1};'
+      ]
+    },
+    testJson: [
+      {
+        name: 'T1',
+        output: {
+          entity: 'FD',
+          form: 'Form4684.FedDclrDsstrLossElect',
+          field: 'DisasterDesc',
+          type: 'string[][]',
+          tomType: 'String',
+          value: [['CCC']]
+        }
+      }
+    ],
+    calcFilePath: 'DisasterDesc.calc.json',
+    testFilePath: 'DisasterDesc.test.json',
+    constantsByName: {
+      FirstDayOfNextYear: '2026-01-01',
+      NextyearLastDay: ''
+    }
+  });
+
+  assert.equal(preview.rows.length, 0);
+});
+
+test('Unit test date roller: skips output rows when selected constant cannot produce a concrete boolean marker value', () => {
+  const preview = buildPreviewRows({
+    calcJson: {
+      Entity: 'FD',
+      Form: 'Form8839.AdoptedChild',
+      Field: 'AdoptionFinalInd',
+      Type: 'Checkbox[]',
+      TomType: 'Checkbox',
+      Dependencies: [
+        { FieldType: 'Constant', FieldRef: 'FD/Constant/NextYearNumber', Constant: 'NextYearNumber' }
+      ],
+      Custom: [
+        'return {0};'
+      ]
+    },
+    testJson: [
+      {
+        name: 'AdptFinalTest3',
+        output: {
+          entity: 'FD',
+          form: 'Form8839.AdoptedChild',
+          field: 'AdoptionFinalInd',
+          type: 'Checkbox[]',
+          tomType: 'Checkbox',
+          value: ['Blank']
+        }
+      }
+    ],
+    calcFilePath: 'AdoptionFinalInd.calc.json',
+    testFilePath: 'AdoptionFinalInd.test.json',
+    constantsByName: {
+      NextYearNumber: 2026
+    }
+  });
+
+  assert.equal(preview.rows.length, 0);
+});
+
 test('Unit test date roller: previews computed bool[][] outputs from maintained TaxYear comparisons', () => {
   const preview = buildPreviewRows({
     calcJson: {

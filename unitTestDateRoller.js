@@ -2075,6 +2075,15 @@ function buildPreviewRows({ calcJson, testJson, calcFilePath, testFilePath, cons
         if (selectedValueAlreadyMatches(node.value, selectedConstant.constantValue)) {
           return;
         }
+        if (/^Unsupported output type:/.test(derived.reason || '')) {
+          return;
+        }
+        if (/^Constant value is blank or not a supported/.test(derived.reason || '')) {
+          return;
+        }
+        if (/^Constant value is not a supported/.test(derived.reason || '')) {
+          return;
+        }
         rows.push({
           rowKind: 'output',
           filePath: testFilePath,

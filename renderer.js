@@ -367,7 +367,7 @@ function renderWorkflowText() {
         : isCoFamilyAffordabilityWorkflow()
           ? 'The built-in parser reads both Colorado credit tables and prepares full review grids for each one.'
           : unitTestWorkflow
-            ? 'The tool scans calc files for direct constant-return date outputs, matches them to unit tests, and proposes only the expected-value changes implied by the current constants file.'
+            ? 'The tool scans calc files that use maintained constants, matches impacted unit tests, and previews safe output or related input updates from direct returns, branches, comparisons, and supported computed expressions.'
           : constantsWorkflow
             ? 'The tool scans the constants file, auto-shifts Year Over Year DateTime values, and proposes editable updates for the other year-over-year constants.'
             : 'The built-in parser reads the selected PDF pages and extracts all income brackets.';
