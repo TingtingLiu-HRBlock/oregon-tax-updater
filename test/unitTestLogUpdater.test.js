@@ -44,6 +44,28 @@ test('Unit test log updater: parses latest failed block for the selected state i
   assert.equal(failures[0].testName, 'FD_Form1040_TaxYear_A');
 });
 
+test('Unit test log updater: parses three-letter city package failed assertions', () => {
+  const logText = [
+    'Preparing unit tests execution for OHC...',
+    'Starting test execution',
+    'Failed OHC_ResidentCityInfo_TaxPayer_HasResGap_Test2 [9 ms]',
+    'Assert.AreEqual failed. Expected:<(Is Blank)>. Actual:<(Not Blank)>. Test2',
+    'Failed OHC_ResidentCityInfo_ResidentCitiesSP_DaysForSort_DaysForSortBeginDateBeforeFirstDay [< 1 ms]',
+    'CollectionAssert.AreEqual failed. Expected:<348>. Actual:<-17>. DaysForSortBeginDateBeforeFirstDay(Element at index 0 do not match.)',
+    'Failed!  - Failed:     2, Passed:  3255, Skipped:     6, Total:  3263, Duration: 1 s - HRBlock.Oce.CalcEngine.OHC.Tests.Unit.dll (net8.0)'
+  ].join('\n');
+
+  const failures = parseFailureAssertions(logText, 'OHC');
+  assert.equal(failures.length, 2);
+  assert.equal(failures[0].testName, 'OHC_ResidentCityInfo_TaxPayer_HasResGap_Test2');
+  assert.equal(failures[0].expectedRaw, '(Is Blank)');
+  assert.equal(failures[0].actualRaw, '(Not Blank)');
+  assert.equal(failures[1].testName, 'OHC_ResidentCityInfo_ResidentCitiesSP_DaysForSort_DaysForSortBeginDateBeforeFirstDay');
+  assert.equal(failures[1].expectedRaw, '348');
+  assert.equal(failures[1].actualRaw, '-17');
+  assert.equal(failures[1].elementIndex, 0);
+});
+
 test('Unit test log updater: previews and applies output-only updates from log failures', async () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'unit-test-log-updater-'));
   const testDir = path.join(tempRoot, 'Form40V.Scanline');

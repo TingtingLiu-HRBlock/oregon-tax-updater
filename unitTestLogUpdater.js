@@ -87,7 +87,7 @@ function parseFailureAssertions(logText, stateCode = '') {
   let current = null;
 
   for (const line of lines) {
-    const failedMatch = line.match(/\bFailed\s+([A-Z]{2}_[^\s\[]+)/);
+    const failedMatch = line.match(/\bFailed\s+([A-Z]{2,3}_[^\s\[]+)/);
     if (failedMatch && stateCode && !failedMatch[1].startsWith(`${stateCode}_`)) {
       current = null;
       continue;

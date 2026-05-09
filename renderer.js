@@ -1820,20 +1820,25 @@ function formatUnitTestReviewValue(value) {
 
 function parseUnitTestManualValue(row, rawValue) {
   const text = String(rawValue ?? '').trim();
-  const type = String(row?.type || '').trim().toLowerCase();
+  let type = String(row?.type || '').trim().toLowerCase();
+  const valuePath = String(row?.valuePath || '');
   if (!text) {
     return { success: false, message: 'Enter a value before applying.' };
   }
 
   if (type.includes('[]')) {
-    try {
-      const parsed = JSON.parse(text);
-      if (!Array.isArray(parsed)) {
+    if (/\bvalue(?:\.\d+)+$/.test(valuePath)) {
+      type = type.replace(/\[\]/g, '');
+    } else {
+      try {
+        const parsed = JSON.parse(text);
+        if (!Array.isArray(parsed)) {
+          return { success: false, message: 'Array values must be valid JSON arrays.' };
+        }
+        return { success: true, value: parsed };
+      } catch {
         return { success: false, message: 'Array values must be valid JSON arrays.' };
       }
-      return { success: true, value: parsed };
-    } catch {
-      return { success: false, message: 'Array values must be valid JSON arrays.' };
     }
   }
 
@@ -3660,7 +3665,10 @@ function updateActionButtons() {
     applyUnitTestLogBtn.disabled = true;
   }
   document.querySelectorAll?.('.unit-test-log-apply-ready-btn')
-    .forEach(button => { button.disabled = !isUnitTestDateRollerWorkflow() || !getUnitTestLogReadyApplyRows(appState.unitTestLogReview).length; });
+    .forEach(button => {
+      const hasReadyRows = (appState.unitTestLogReview?.rows || []).some(row => row.canApply);
+      button.disabled = !isUnitTestDateRollerWorkflow() || !hasReadyRows;
+    });
   document.querySelectorAll?.('.unit-test-log-apply-manual-btn')
     .forEach(button => { button.disabled = !isUnitTestDateRollerWorkflow() || !hasUnitTestLogManualOverrideText(appState.unitTestLogReview); });
   document.querySelectorAll?.('.unit-test-apply-ready-btn')
@@ -3770,7 +3778,7 @@ function bindEvents() {
   });
 }
 
-if (typeof module !== 'undefined' && module.exports) module.exports = { appState, parseIntegerText, groupPdfTextItemsByRow, findNumericItemsInRange, findMinnesotaValueWindow, parseMinnesotaPdfRows, parseMarriageCreditPdfRows, parseMarriageCreditFromFullText, parseHomeownerRefundPageRows, parseRenterRefundPageRows, buildHomeownerRefundTables, buildRenterRefundTables, overlayGenericTableRows, normalizeRefundJsonRows, normalizeHomeownerRefundJsonRows, parseOrPdfRows, parseCoFamilyAffordabilityPageRows, buildCoFamilyReview, normalizeDeterministicRowsToData, mergeExtractedData, sortMarriageCreditRows, buildMarriageCreditReview, buildGenericTableReview, shiftDateTimeValueByYears, suggestYearOverYearValue, buildConstantsMaintenanceReview, buildUnitTestDateRollerReview, buildUnitTestLogReview, getEffectivePdfPageRange, renderWorkflowText, renderSelectedSource, renderMarriageCreditSection, updateActionButtons, showDiffTab, resetWorkflowContext, clearTransientData };
+if (typeof module !== 'undefined' && module.exports) module.exports = { appState, parseIntegerText, groupPdfTextItemsByRow, findNumericItemsInRange, findMinnesotaValueWindow, parseMinnesotaPdfRows, parseMarriageCreditPdfRows, parseMarriageCreditFromFullText, parseHomeownerRefundPageRows, parseRenterRefundPageRows, buildHomeownerRefundTables, buildRenterRefundTables, overlayGenericTableRows, normalizeRefundJsonRows, normalizeHomeownerRefundJsonRows, parseOrPdfRows, parseCoFamilyAffordabilityPageRows, buildCoFamilyReview, normalizeDeterministicRowsToData, mergeExtractedData, sortMarriageCreditRows, buildMarriageCreditReview, buildGenericTableReview, shiftDateTimeValueByYears, suggestYearOverYearValue, buildConstantsMaintenanceReview, buildUnitTestDateRollerReview, buildUnitTestLogReview, getUnitTestLogReadyApplyRows, getEffectivePdfPageRange, renderWorkflowText, renderSelectedSource, renderMarriageCreditSection, updateActionButtons, showDiffTab, resetWorkflowContext, clearTransientData };
 if (typeof window !== 'undefined' && typeof document !== 'undefined') init();
 
 

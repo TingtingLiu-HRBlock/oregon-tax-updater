@@ -1,12 +1,13 @@
 {
   "name": "bee-updater",
-  "version": "2.0.0",
+  "version": "2.0.2",
   "description": "Multi-state tax table updater with deterministic PDF extraction",
   "main": "main.js",
   "scripts": {
     "test": "node --test",
     "start": "electron .",
-    "build": "electron-builder"
+    "build": "electron-builder",
+    "build:win": "electron-builder --win nsis --x64"
   },
   "build": {
     "appId": "com.hrblock.bee-updater",
@@ -18,6 +19,10 @@
     "files": [
       "main.js",
       "pathUtils.js",
+      "unitTestDateRoller.js",
+      "unitTestLogUpdater.js",
+      "relaxedJson.js",
+      "constantsByName.js",
       "preload.js",
       "renderer.js",
       "calcViewer.js",

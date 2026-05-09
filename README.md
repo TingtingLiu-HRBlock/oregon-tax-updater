@@ -178,14 +178,22 @@ npm start
 npm run build
 ```
 
-This generates a Windows NSIS installer in `dist/` named like `State-Tax-Table-Updater-Setup-2.0.0.exe`.
+This generates a Windows NSIS installer in `dist/` named like `Bee-Updater-Setup-2.0.1.exe`.
+
+To build only the Windows installer:
+
+```bash
+npm run build:win
+```
 
 ## Share With Team
 
 1. Run `npm install` once on the build machine.
-2. Run `npm run build`.
-3. Share the generated installer from `dist/`.
-4. Teammates can install `Bee Updater` without needing Node.js or the source repo.
+2. Run `npm test`.
+3. Run `npm run build:win`.
+4. Share `dist/Bee-Updater-Setup-2.0.1.exe`.
+5. Keep the `.blockmap`, `latest.yml`, and `win-unpacked` files only if you later add an auto-update distribution flow.
+6. Teammates can install `Bee Updater` without needing Node.js or the source repo.
 
 ## Typical Workflow
 
@@ -335,7 +343,7 @@ This generates a Windows NSIS installer in `dist/` named like `State-Tax-Table-U
 
 ## Version
 
-- App version: `2.0.0`
+- App version: `2.0.1`
 - Supported deterministic PDF parser states: `OR`, `MN`, `CO`
 - Supported constants-maintenance path pattern:
   - `C:\TaxEngine\OCE-Regulatory-{regulatoryYear}\Source\{STATE_CODE}\Utils\{STATE_CODE}.consts.json`

@@ -24,6 +24,7 @@ const {
   buildConstantsMaintenanceReview,
   buildUnitTestDateRollerReview,
   buildUnitTestLogReview,
+  getUnitTestLogReadyApplyRows,
   normalizeDeterministicRowsToData,
   getEffectivePdfPageRange,
   renderWorkflowText,
@@ -1069,6 +1070,90 @@ test('Unit test log review UI shows calc links and manual reviewed value inputs'
   renderMarriageCreditSection();
   assert.match(container.innerHTML, /unit-test-log-review-panel active" id="unit-test-log-panel-manual"/);
   assert.doesNotMatch(container.innerHTML, /unit-test-log-review-panel active" id="unit-test-log-panel-ready"/);
+});
+
+test('Unit test log ready apply button stays enabled when ready input edits need validation', () => {
+  resetAppState();
+  appState.selectedWorkflowKey = 'unit-test-date-roller';
+  appState.filePaths = {
+    TEST_ROOT: 'C:\\TaxEngine\\OCE-Regulatory-2026\\Tests\\OHC',
+    CALC_ROOT: 'C:\\TaxEngine\\OCE-Regulatory-2026\\Source\\OHC\\Calc',
+    CONSTS: 'C:\\TaxEngine\\OCE-Regulatory-2026\\Source\\OHC\\Constants\\OHCConstants.constants.json'
+  };
+  appState.unitTestLogReview = buildUnitTestLogReview({
+    logPath: 'latest.log',
+    failureCount: 1,
+    rows: [
+      {
+        filePath: 'C:\\TaxEngine\\OCE-Regulatory-2026\\Tests\\OHC\\ResidentCityInfo\\DaysForSort.test.json',
+        calcFieldPath: 'OHC/ResidentCityInfo.ResidentCitiesSP/DaysForSort',
+        caseName: 'DaysForSortBeginDateBeforeFirstDay',
+        fieldPath: '0.output',
+        valuePath: '0.output.value',
+        type: 'decimal',
+        currentValue: 348,
+        proposedValue: -17,
+        canApply: true,
+        inputCandidates: [
+          {
+            label: 'ResidentCityInfo.ResidentCitiesSP/BeginDate',
+            fieldPath: '0.inputs.0',
+            valuePath: '0.inputs.0.value',
+            type: 'DateTime[]',
+            tomType: 'Date',
+            currentValue: ['2025-12-15'],
+            manualOverrideText: '2026-12-15'
+          }
+        ]
+      }
+    ]
+  });
+
+  const elements = {
+    extractBtn: { disabled: true },
+    updateJsonBtn: { disabled: true },
+    previewUnitTestLogBtn: { disabled: true },
+    applyUnitTestLogBtn: { disabled: false, style: { display: '' } }
+  };
+  const readyButton = { disabled: true };
+  global.document = {
+    getElementById(id) {
+      return elements[id] || null;
+    },
+    querySelectorAll(selector) {
+      if (selector === '.unit-test-log-apply-ready-btn') return [readyButton];
+      return [];
+    }
+  };
+
+  updateActionButtons();
+  assert.equal(readyButton.disabled, false);
+});
+
+test('Unit test log ready output override accepts scalar edits for indexed array elements', () => {
+  const review = buildUnitTestLogReview({
+    logPath: 'latest.log',
+    failureCount: 1,
+    rows: [
+      {
+        filePath: 'C:\\TaxEngine\\OCE-Regulatory-2026\\Tests\\OHC\\ResidentCityInfo\\DaysForSort.test.json',
+        calcFieldPath: 'OHC/ResidentCityInfo.ResidentCitiesSP/DaysForSort',
+        caseName: 'DaysForSortBeginDateBeforeFirstDay',
+        fieldPath: '1.output',
+        valuePath: '1.output.value.0',
+        type: 'decimal[]',
+        currentValue: 348,
+        proposedValue: -17,
+        readyOverrideText: '348',
+        canApply: true
+      }
+    ]
+  });
+
+  const result = getUnitTestLogReadyApplyRows(review, { collectErrors: true });
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].proposedValue, 348);
 });
 
 test('Review tab scenario: switching tabs keeps exactly one active tab and panel', () => {
